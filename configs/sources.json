@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "region": "Sardinia, Italy",
+  "metadata_source": "https://www.sardegnamobilita.it/open-data/trasporti",
+  "data_policy": "Manual GTFS ZIP import only until URL/license/availability checks are implemented",
+  "sources": [
+    {"source_id": "arst", "publisher": "ARST", "landing_url": "https://www.sardegnamobilita.it/open-data/trasporti", "download_url": null, "license": "verify from original resource"},
+    {"source_id": "atp_sassari", "publisher": "ATP Sassari", "landing_url": "https://www.sardegnamobilita.it/open-data/trasporti", "download_url": null, "license": "verify from original resource"},
+    {"source_id": "trenitalia_sardegna", "publisher": "Trenitalia Sardegna", "landing_url": "https://www.sardegnamobilita.it/open-data/trasporti", "download_url": null, "license": "verify from original resource"},
+    {"source_id": "aspo_olbia", "publisher": "ASPO Olbia", "landing_url": "https://www.sardegnamobilita.it/open-data/trasporti", "download_url": null, "license": "verify from original resource"}
+  ]
+}

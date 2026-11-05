@@ -1,0 +1,21 @@
+# Data files and local environments
+/data/*
+!/data/README.md
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.egg-info/
+.env
+.env.*
+!.env.example
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.vite/
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.db
+*.zip
+!/backend/tests/fixtures/*.zip
+.DS_Store

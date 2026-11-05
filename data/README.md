@@ -1,0 +1,1 @@
+This directory contains private, locally generated ZIP archives and database files. Its contents are ignored by Git. Never commit raw feed files without checking license terms and attribution requirements.
