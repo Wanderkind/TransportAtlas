@@ -8,6 +8,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from .storage import connect, rows, one
 from .schedule import daily_summary, stop_board, trip_stop_times, active_services, active_snapshots
+from .network import network_geometry, MODE_TYPES
+from .timetable import route_timetable
 
 DEFAULT_DB=Path(os.getenv('TRANSPORT_ATLAS_DB','data/transport_atlas.duckdb'))
 
@@ -83,6 +85,26 @@ def create_app(db_path: str | Path | None = None,backend: str | None = None):
                 schematic.add(coords)
                 features.append({'type':'Feature','properties':{'snapshot_id':snapshot_id,'route_id':route_id,'shape_id':None,'quality':'schematic-stop-link'},'geometry':{'type':'LineString','coordinates':coords}})
         return {'type':'FeatureCollection','features':features}
+
+    @app.get('/api/v1/network/geometry')
+    def complete_network(date_value: date = Query(alias='date'), mode: str = 'all',
+                         source: str | None = None, active_only: bool = True,
+                         max_routes: int = Query(default=1200, ge=1, le=5000),
+                         max_points: int = Query(default=120000, ge=1000, le=300000)):
+        if mode not in MODE_TYPES:
+            raise HTTPException(status_code=422, detail='Unknown transport mode')
+        return network_geometry(app.state.con, date_value, source_id=source,
+                                mode=mode, active_only=active_only,
+                                max_routes=max_routes, max_points=max_points)
+
+    @app.get('/api/v1/route/{snapshot_id}/{route_id}/timetable')
+    def route_schedule(snapshot_id: str, route_id: str,
+                       date_value: date = Query(alias='date'),
+                       limit: int = Query(default=100, ge=1, le=500)):
+        try:
+            return route_timetable(app.state.con, snapshot_id, route_id, date_value, limit=limit)
+        except KeyError:
+            raise HTTPException(status_code=404, detail='Route not found')
 
     @app.get('/api/v1/stop/{snapshot_id}/{stop_id}/departures')
     def departures(snapshot_id: str,stop_id: str,date_value: date=Query(alias='date'),start_hour:int=0,end_hour:int=24):
