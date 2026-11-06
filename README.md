@@ -208,8 +208,11 @@ These paths are ignored by Git. Only synthetic test ZIPs belong in the repositor
 Map responses are cached in memory and on disk; selection and filter changes use
 different keys. Invalid cache files are rebuilt. Simplified shape levels are also
 stored per immutable snapshot, so after the very first regional build (about a
-minute) a new date usually builds in a few seconds, even after a restart. Cache
-files can be removed while services are stopped to force rebuilding.
+minute) a new date usually builds in a few seconds, even after a restart. Network
+responses are pruned least-recently-used beyond 500 files or 1 GiB (override with
+`TRANSPORT_ATLAS_NETWORK_CACHE_FILES` / `TRANSPORT_ATLAS_NETWORK_CACHE_BYTES`);
+abandoned `.part` files older than an hour are removed. Cache files can be removed
+while services are stopped to force rebuilding.
 The application uses bounded GeoJSON, not national vector tiles. External
 MobilityData validation, stop-board pagination, historical selection UI, exports,
 physical-stop matching, connectivity/accessibility analysis and multi-country

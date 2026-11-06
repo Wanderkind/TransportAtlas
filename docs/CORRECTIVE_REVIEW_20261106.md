@@ -134,6 +134,17 @@ the real server, ARST MCA1 (175 departures) showed 100 after one Load more,
 identical to API pages 0 and 50, and a direction-0 filter (87 matching)
 matched the server-filtered page.
 
+## November 7 (overnight) — cache bounds and bundle split
+
+`network_cache.prune` keeps disposable response files within 500 files / 1 GiB
+(environment-configurable), evicting least-recently-used first. Reads refresh
+mtime, the just-written key is never evicted, unrelated files are ignored, and
+abandoned `.part` temporaries older than an hour are removed
+(`test_phase3_cache_lifecycle.py`). The current 44 files / 75 MB are well within
+bounds, so nothing was evicted. Vite now emits separate `maplibre` (1,064 kB),
+`react` (222 kB) and app (37 kB) chunks. The long-standing size warning is
+resolved with an explicit 1,100 kB threshold sized to the MapLibre vendor chunk.
+
 ---
 
 ## Historical record: paused checkpoint (November 6–7)

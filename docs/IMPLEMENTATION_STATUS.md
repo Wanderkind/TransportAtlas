@@ -254,8 +254,8 @@ remain ignored. The README documents fresh installation and imports.
 ## Remaining work and next milestones
 
 1. Done November 7: per-snapshot simplified shape levels are persisted
-   (`data/cache/shapes/`). Viewport/vector-tile loading remains future work, and
-   network-response cache files still accumulate across explored dates.
+   (`data/cache/shapes/`). Network responses are LRU-bounded (500 files / 1 GiB
+   by default). Viewport/vector-tile loading remains future work.
 2. Done November 7: route timetables page with `offset`/`limit`, with server-side
    direction/variant filters applied before paging and a **Load more** control.
 3. Run the external GTFS validator, normalize more optional fields and complete
