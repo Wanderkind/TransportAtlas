@@ -1,19 +1,44 @@
 # TransportAtlas — Phase 3 handoff
 
-**Update, November 7 (resumed session):** the P1 rendering blocker is resolved
-and local verification is green. Both browser scripts and
-`verify_local.ps1 -Browser` pass, and after-change performance is measured.
-See the top section of `CORRECTIVE_REVIEW_20261106.md` for the root cause, the
-`sourceGate.ts` fix, evidence files and measurements. The remaining work is P2
-latency (active stops; uncached regional geometry) and P3 milestones. No merge,
-PR, deployment or remote CI was performed; integration is the user's decision.
-The original checkpoint text follows for history.
+## Current state — November 7, end of overnight session
 
-**Overnight update:** P2 latency was profiled and reduced. Active stops went
-from about 4.3 s to 0.42 s; a new date after a restart went from about 48 s to
-about 3 s. The changes were a DuckDB failed-import fix, an output-identical
-faster simplifier and a persistent per-snapshot shape store. See the
-corrective review section "measured latency fixes".
+Branch `codex/local-real-feed-atlas`, HEAD `baa3b77`, pushed with CI skipped.
+Not merged; no PR, deployment or remote CI. Integration is the user's decision.
+Latest complete local check (`verify-local-browser-20261107-run9.log`):
+`verify_local.ps1 -Browser`: 91 Python tests, loopback startup, TypeScript/Vite
+build, real-data smoke and filter-race suites, with no JavaScript errors.
+
+Overnight commits, in order (details in `CORRECTIVE_REVIEW_20261106.md`):
+
+| Commit | Change |
+|---|---|
+| `e19f7eb` | MapLibre rendering blocker fixed (`sourceGate.ts`; visibility by data identity) |
+| `bd75922` | Latency: DuckDB failed-import probe, identical faster simplifier, persistent shape store |
+| `99bfd67` | Timetable pagination with server-side direction/variant filters |
+| `74675f0` | LRU-bounded network response cache; vendor chunk split |
+| `b5af288` | Nearby stop records across sources (proximity only) |
+| `7d94a1a` | Fixes from an independent review of the night's diff |
+| `baa3b77` | Routes serving a stop, with calls on the service day |
+
+Measured now: active stops ≈ 0.42 s (was 4.3 s); first uncached date after a
+restart ≈ 3 s (was ≈ 48 s); warm all-four browser readiness 3–6 s; cached date
+change ≈ 1.6–2.7 s. The first-ever regional build on an empty shape store still
+takes about a minute, once.
+
+Remaining (each needs a user decision or new data, so not done unattended):
+- External GTFS validation: needs downloading the MobilityData validator (Java).
+- Optional GTFS fields (wheelchair, platform codes, colours): need importer
+  changes plus a re-import of the verified database.
+- Historical snapshot selection: only one snapshot per source is imported.
+- Broader regional/country validation: needs new feed downloads.
+- Starlette/httpx test-client deprecation: needs a dependency change (`httpx2`).
+- Physical-stop matching and connectivity beyond the new proximity and
+  routes-at-stop views; viewport/vector-tile loading for national scale.
+
+Resume: `npm run build --prefix frontend`, `.\scripts\start_local.ps1 -Production`,
+`.\scripts\verify_local.ps1 -Browser`, `.\scripts\stop_local.ps1`. Evidence lives in
+ignored `data/local-verification/phase3/`. Leave the empty
+`codex-phase3f-review.patch` untouched.
 
 ## Original checkpoint (before resolution)
 

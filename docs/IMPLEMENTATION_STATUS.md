@@ -2,6 +2,12 @@
 
 ## Current: Phase 3 corrective stabilization
 
+**State at end of November 7 overnight session** (HEAD `baa3b77`, pushed, not
+merged): the full local workflow passes (91 tests, both browser suites). Added
+overnight: rendering fix, latency fixes, timetable pagination, cache bounds,
+nearby stop records and routes serving a stop. See the
+[handoff](PHASE3_HANDOFF.md) for the commit table and remaining decisions.
+
 **November 7, resumed:** the MapLibre rendering blocker is fixed. Visibility is
 now gated on data identity (`frontend/src/sourceGate.ts`) instead of
 `isSourceLoaded`, which crashed or livelocked. Both browser suites and the
