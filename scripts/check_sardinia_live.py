@@ -11,7 +11,7 @@ from pathlib import Path
 import sys
 import time
 
-from transport_atlas.official import catalog, discover, download
+from transport_atlas.official import catalog, discover, download, _get, _Anchors
 from transport_atlas.ingest import import_file
 from transport_atlas.storage import connect
 from transport_atlas.schedule import daily_summary
@@ -26,6 +26,22 @@ def attempt(*, source: str, root: Path, service_day: date) -> dict:
         result['discovery_seconds'] = round(time.monotonic() - t0, 2)
         if not info['resource_candidates']:
             result['error'] = 'No official GTFS resource URL discoverable from current page HTML'
+            try:
+                raw, final = _get(result['landing_url'])
+                html = raw.decode('utf-8-sig', errors='replace')
+                parser = _Anchors(); parser.feed(html)
+                relevant = [a for a in parser.items if
+                            any(x in (a['text']+' '+a['href']).lower() for x in ('gtfs','orari','download','zip','.csv','.txt'))]
+                result['diagnostic_links'] = [{k:str(a.get(k,''))[:350] for k in ('text','href')}
+                                               for a in relevant[-20:]]
+                needles=['Quadri orari ASPO','Quadri orari ATP Sassari','Risorse']
+                for needle in needles:
+                    i=html.lower().rfind(needle.lower())
+                    if i>=0:
+                        result['html_near_resource'] = html[max(0,i-300):i+800].replace('\n',' ')[:1100]
+                        break
+            except Exception as diag_exc:
+                result['diagnostic_error']=str(diag_exc)[:250]
             return result
         output = root / (source + '.zip')
         provenance = download(source, output)
@@ -78,6 +94,9 @@ def main():
             note=x.get('error','Unverified')
         note=str(note).replace('|','/').replace('\n',' ')[:500]
         md.append(f"| `{x['source_id']}` | {x['status']} | {note} |")
+        if x.get('diagnostic_links') or x.get('html_near_resource'):
+            md.extend(['',f"<details><summary>{x['source_id']} discovery diagnostics</summary>",'',
+                       '```json',json.dumps({'links':x.get('diagnostic_links',[]),'html_fragment':x.get('html_near_resource','')},ensure_ascii=False,indent=2)[:5000],'```','</details>',''])
     md.extend(['','Sources: official Sardegna Mobilità operator pages. Raw ZIP files are excluded from the uploaded artifact and source control.'])
     text='\n'.join(md)+'\n'
     (root / 'report.md').write_text(text,encoding='utf-8')
