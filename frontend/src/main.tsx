@@ -122,6 +122,14 @@ function App(){
  const scopeRef=useRef(filterKey);scopeRef.current=filterKey;
  const chooseRoute=useCallback((route:Route)=>setSelection({context:scopeRef.current,route,stop:null}),[]);
  const chooseStop=useCallback((stop:Stop)=>setSelection({context:scopeRef.current,route:null,stop}),[]);
+ const filtersRef=useRef({mode,source,hiddenSources,activeOnly});filtersRef.current={mode,source,hiddenSources,activeOnly};
+ const chooseRouteId=useCallback((snapshot:string,routeId:string)=>{
+   // Only routes the current filters can display may be selected.
+   const f=filtersRef.current;
+   const route=routesRef.current.find(r=>r.snapshot_id===snapshot&&r.route_id===routeId&&modeMatches(r.route_type,f.mode)&&(!f.source||r.source_id===f.source)&&!f.hiddenSources.includes(r.source_id)&&(!f.activeOnly||r.active_on_date));
+   if(route)chooseRoute(route);
+   return !!route;
+ },[chooseRoute]);
  const visibleNetwork=network,visibleStops=stops;
  const display=useRef({network:visibleNetwork,stops:visibleStops,route:selectedRoute,focused,direction:selectedDirection,networkReady:false,stopsReady:false,key:filterKey});
  display.current={network:visibleNetwork,stops:visibleStops,route:selectedRoute,focused,direction:selectedDirection,networkReady:networkRequest.status==='ready',stopsReady:stopRequest.status==='ready',key:filterKey};
@@ -234,7 +242,7 @@ function App(){
          <strong>{s.source_id}</strong><span>{s.active_route_records} active routes</span><span>{s.scheduled_trip_instances} scheduled trips</span>
          <small>{s.feed_start}–{s.feed_end}</small></div>)}{!summary?.snapshots.length&&<span className="muted">No imported feeds. See README for an import command.</span>}</div></div>
    </main>
-   <aside className="inspector" data-filter-key={filterKey}><Inspector key={`${filterKey}|${routeUid}|${selectedStop?`${selectedStop.snapshot_id}:${selectedStop.stop_id}`:''}`} route={selectedRoute} stop={selectedStop} date={date} timetable={timetable} board={board} timetableError={timetableRequest.error} boardError={boardRequest.error} snapshots={snapshots} onGeometry={setFocused} onDirection={setSelectedDirection} onStop={chooseStop}/></aside>
+   <aside className="inspector" data-filter-key={filterKey}><Inspector key={`${filterKey}|${routeUid}|${selectedStop?`${selectedStop.snapshot_id}:${selectedStop.stop_id}`:''}`} route={selectedRoute} stop={selectedStop} date={date} timetable={timetable} board={board} timetableError={timetableRequest.error} boardError={boardRequest.error} snapshots={snapshots} onGeometry={setFocused} onDirection={setSelectedDirection} onStop={chooseStop} onRoute={chooseRouteId}/></aside>
   </div><div className="app-status">{loading?'Loading dataset…':networkLoading?'Loading geometry…':stopLoading?'Loading current stops…':renderedKey!==filterKey&&networkRequest.status==='ready'?'Drawing current network…':`Showing ${visibleNetwork.features.length} route alignments`} · {searching?'Searching stops…':''} ·
     {basemap==='streets'?' Online basemap requires internet':' Offline plain map'} · Imported data may be incomplete or expired.</div>
  </div>

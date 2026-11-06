@@ -131,7 +131,8 @@ re-observe its original network retrieval. Keep that distinction in reports.
 filters, Load more); external GTFS validation; more optional GTFS fields;
 ~~cache lifecycle~~ (network responses LRU-bounded Nov 7; shape store compacts deltas); historical snapshot selection; broader regional/country
 validation; physical-stop matching (a first step landed Nov 7: cross-source
-nearby stop records, explicitly proximity only) and connectivity/accessibility analysis.
+nearby stop records, explicitly proximity only) and connectivity/accessibility
+analysis (first step Nov 7: routes serving a stop, with calls on the service day).
 Prioritize the rendering blocker and measured latency before these features.
 
 ## Documentation to finalize

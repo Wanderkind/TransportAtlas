@@ -50,3 +50,26 @@ def test_nearby_api(two_sources):
         assert client.get(f'/api/v1/stop/{first}/A/nearby?radius=200').json()['total'] == 2
         assert client.get(f'/api/v1/stop/{first}/A/nearby?radius=5000').status_code == 422
         assert client.get(f'/api/v1/stop/{first}/missing/nearby').status_code == 404
+
+
+def test_stop_routes_count_calls_on_the_service_day(two_sources):
+    from datetime import date
+    from transport_atlas.nearby import stop_routes
+    con, first, _, root = two_sources
+    expected = {}
+    for r in con.execute('''SELECT t.route_id,t.service_id,t.trip_id FROM trips t JOIN stop_times st
+            ON st.snapshot_id=t.snapshot_id AND st.trip_id=t.trip_id WHERE t.snapshot_id=? AND st.stop_id='A' ''', (first,)).fetchall():
+        expected.setdefault(r[0], set()).add(r[2])
+    result = stop_routes(con, first, 'A', date(2026, 11, 6))
+    assert {r['route_id']: r['trip_templates'] for r in result['routes']} == {k: len(v) for k, v in expected.items()}
+    assert all(0 <= r['calls_on_date'] <= r['trip_templates'] for r in result['routes'])
+    assert any(r['calls_on_date'] for r in result['routes'])
+    later = stop_routes(con, first, 'A', date(2030, 1, 1))  # outside every calendar
+    assert all(r['calls_on_date'] == 0 for r in later['routes'])
+    assert stop_routes(con, first, 'NOXY', date(2026, 11, 6))['routes'] == []
+    with pytest.raises(KeyError):
+        stop_routes(con, first, 'missing', date(2026, 11, 6))
+    con.close()
+    with TestClient(create_app(root/'near.sqlite', 'sqlite')) as client:
+        assert client.get(f'/api/v1/stop/{first}/A/routes?date=2026-11-06').status_code == 200
+        assert client.get(f'/api/v1/stop/{first}/missing/routes?date=2026-11-06').status_code == 404

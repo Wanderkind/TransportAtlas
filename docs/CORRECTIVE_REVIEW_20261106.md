@@ -188,6 +188,17 @@ by design are the ones the UI can show; and `windows_truncated` on later pages,
 which the UI does not read. New tests: partial hydrate never compacts;
 unserializable levels and stale parts fail safe.
 
+## November 7 (overnight) — routes serving a stop
+
+`GET /api/v1/stop/{snapshot}/{stop}/routes?date=` returns each route whose trips
+call at the stop, with distinct trip templates and how many run on the GTFS
+service day. Frequency trips are counted as templates, not expanded. The stop
+inspector lists them (most calls first). Clicking one opens the route when the
+current mode, operator and operating-date filters can show it; otherwise it
+explains why it is hidden. Tests check counts against direct SQL, out-of-calendar
+dates, missing coordinates and 404. The browser smoke compares the Olbia stop's
+list with the API and opens an active route from it.
+
 ---
 
 ## Historical record: paused checkpoint (November 6–7)

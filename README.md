@@ -161,7 +161,10 @@ Summary statistics always cover the full route.
 The stop inspector lists **nearby stop records within 200 m** from every selected
 source (`/api/v1/stop/{snapshot}/{stop}/nearby?radius=`, 10–1000 m), sorted by
 great-circle distance. This is proximity between source records, not a verified
-physical-stop match, walking route or guaranteed transfer.
+physical-stop match, walking route or guaranteed transfer. It also lists the
+**routes serving the stop** (`/api/v1/stop/{snapshot}/{stop}/routes?date=`), with
+trip templates calling there on the selected service day; clicking one opens it
+when the current filters can display it.
 
 ## Verify locally
 

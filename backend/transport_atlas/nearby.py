@@ -50,3 +50,38 @@ def nearby_stops(con, snapshot_id: str, stop_id: str, *, radius_m: float = 200, 
     found.sort(key=lambda s: (s['distance_m'], s['source_id'], s['stop_id']))
     result.update(stops=found[:limit], total=len(found), truncated=len(found) > limit)
     return result
+
+
+def stop_routes(con, snapshot_id: str, stop_id: str, service_day) -> dict:
+    """Routes whose trips call at a stop, with calls on the selected service day.
+
+    Counts are trip templates calling at the stop (a trip visiting twice counts
+    once). ``calls_on_date`` uses the GTFS service day; frequency-based trips are
+    counted as templates, not expanded instances.
+    """
+    from .network import mode_for_type
+    from .schedule import active_services
+    stop = one(con, 'SELECT stop_id FROM stops WHERE snapshot_id=? AND stop_id=?', (snapshot_id, stop_id))
+    if stop is None:
+        raise KeyError('Unknown stop')
+    services = active_services(con, snapshot_id, service_day)
+    calls = rows(con, '''SELECT DISTINCT t.trip_id,t.route_id,t.service_id FROM stop_times st
+        JOIN trips t ON t.snapshot_id=st.snapshot_id AND t.trip_id=st.trip_id
+        WHERE st.snapshot_id=? AND st.stop_id=?''', (snapshot_id, stop_id))
+    counts: dict[str, list[int]] = {}
+    for call in calls:
+        total_active = counts.setdefault(call['route_id'], [0, 0])
+        total_active[0] += 1
+        total_active[1] += call['service_id'] in services
+    routes = []
+    if counts:
+        ids = sorted(counts)
+        placeholders = ','.join('?' for _ in ids)
+        for route in rows(con, f'''SELECT route_id,short_name,long_name,route_type FROM routes
+                WHERE snapshot_id=? AND route_id IN ({placeholders})''', (snapshot_id, *ids)):
+            total, active = counts[route['route_id']]
+            routes.append(dict(route, snapshot_id=snapshot_id, mode=mode_for_type(route['route_type']),
+                               trip_templates=total, calls_on_date=active))
+    routes.sort(key=lambda r: (-r['calls_on_date'], r['short_name'] or r['route_id'], r['route_id']))
+    return {'snapshot_id': snapshot_id, 'stop_id': stop_id, 'service_date': str(service_day), 'routes': routes,
+            'note': 'Trip templates calling at this stop; frequency trips are not expanded.'}

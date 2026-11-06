@@ -132,6 +132,14 @@ def main():
         until(driver,lambda d:[(e.get_attribute('data-source-id'),e.get_attribute('data-stop-id')) for e in d.find_elements(By.CSS_SELECTOR,'.inspector .nearby-stop')]==[(n['source_id'],n['stop_id']) for n in near['stops']] and 'Not a verified' in d.find_element(By.CSS_SELECTOR,'.inspector .nearby').text,'nearby stop records')
         report['nearby']={'stop':olbia['stop_id'],'source':olbia['source_id'],'total':near['total'],'other_sources':sorted({n['source_id'] for n in near['stops'] if not n['same_source']})}
         report['checks'].append('nearby cross-source stop records match the API and are labelled as proximity only')
+        served=api(f"stop/{olbia['snapshot_id']}/{olbia['stop_id']}/routes?date=2026-11-06")['routes']
+        until(driver,lambda d:[e.get_attribute('data-route-id') for e in d.find_elements(By.CSS_SELECTOR,'.inspector .stop-route')]==[r['route_id'] for r in served],'routes serving the stop')
+        active_route=next((r for r in served if r['calls_on_date']>0),None)
+        if active_route:
+            next(e for e in driver.find_elements(By.CSS_SELECTOR,'.inspector .stop-route') if e.get_attribute('data-route-id')==active_route['route_id']).click()
+            until(driver,lambda d:d.find_element(By.CSS_SELECTOR,'.inspector .inspect-label').text=='ROUTE' and d.find_element(By.CSS_SELECTOR,'.inspector .inspect-label').get_attribute('data-route-uid')==f"{active_route['snapshot_id']}:{active_route['route_id']}",'route opened from stop')
+        report['stop_routes']={'stop':olbia['stop_id'],'routes':len(served),'opened':active_route and active_route['route_id']}
+        report['checks'].append('routes serving a stop match the API and open the route inspector')
         set_input(driver,stop_search,'')
         until(driver,lambda d:not d.find_elements(By.CSS_SELECTOR,'.stop-result'),'stop search cleared')
         checkbox=driver.find_element(By.CSS_SELECTOR,'input[aria-label="Show atp_sassari"]');checkbox.click()
