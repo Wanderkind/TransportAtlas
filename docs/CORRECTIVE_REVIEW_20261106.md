@@ -145,6 +145,18 @@ bounds, so nothing was evicted. Vite now emits separate `maplibre` (1,064 kB),
 `react` (222 kB) and app (37 kB) chunks. The long-standing size warning is
 resolved with an explicit 1,100 kB threshold sized to the MapLibre vendor chunk.
 
+## November 7 (overnight) — nearby stop records across sources
+
+`nearby.py` adds `GET /api/v1/stop/{snapshot}/{stop}/nearby?radius=200&limit=30`.
+It finds stop records from every selected snapshot within a haversine radius,
+using a SQL bounding-box prefilter, and sorts them by distance. The stop
+inspector lists them, and clicking one opens its board. Every response and the
+UI carry the note that this is straight-line proximity, not a verified
+physical-stop match, walking route or transfer. Tests
+(`test_phase3_nearby.py`) cover cross-source 0 m matches, the radius boundary,
+limits, missing coordinates and API validation. The browser smoke checks the
+searched Olbia stop's list against the API.
+
 ---
 
 ## Historical record: paused checkpoint (November 6–7)

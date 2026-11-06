@@ -123,6 +123,13 @@ def main():
         until(driver,lambda d:len(d.find_elements(By.CSS_SELECTOR,'.stop-result'))>0,'imported Olbia stop search')
         driver.find_element(By.CSS_SELECTOR,'.stop-result').click()
         until(driver,lambda d:len(d.find_elements(By.CSS_SELECTOR,'.inspector .inspect-label'))>0 and d.find_element(By.CSS_SELECTOR,'.inspector .inspect-label').text=='STOP','searched stop inspection')
+        # Nearby stop records across sources must match the API exactly.
+        searched=driver.execute_script("return document.querySelector('.inspector h2').textContent")
+        olbia=next(s for s in api('stops?date=2026-11-06&active_only=true&search=Olbia')['stops'] if (s['name'] or s['stop_id'])==searched)
+        near=api(f"stop/{olbia['snapshot_id']}/{olbia['stop_id']}/nearby?radius=200")
+        until(driver,lambda d:[(e.get_attribute('data-source-id'),e.get_attribute('data-stop-id')) for e in d.find_elements(By.CSS_SELECTOR,'.inspector .nearby-stop')]==[(n['source_id'],n['stop_id']) for n in near['stops']] and 'Not a verified' in d.find_element(By.CSS_SELECTOR,'.inspector .nearby').text,'nearby stop records')
+        report['nearby']={'stop':olbia['stop_id'],'source':olbia['source_id'],'total':near['total'],'other_sources':sorted({n['source_id'] for n in near['stops'] if not n['same_source']})}
+        report['checks'].append('nearby cross-source stop records match the API and are labelled as proximity only')
         set_input(driver,stop_search,'')
         until(driver,lambda d:not d.find_elements(By.CSS_SELECTOR,'.stop-result'),'stop search cleared')
         checkbox=driver.find_element(By.CSS_SELECTOR,'input[aria-label="Show atp_sassari"]');checkbox.click()

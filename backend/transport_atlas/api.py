@@ -14,6 +14,7 @@ from .schedule import daily_summary, stop_board, trip_stop_times, active_service
 from .network import network_geometry, MODE_TYPES, SHAPE_CACHE_LIMIT
 from . import shape_store
 from .timetable import route_timetable
+from .nearby import nearby_stops
 from .provenance import declared_info
 from .network_cache import cache_key, read_cache, write_cache
 
@@ -197,6 +198,14 @@ def create_app(db_path: str | Path | None = None,backend: str | None = None):
                                    offset=offset, direction=direction, variant=variant)
         except KeyError:
             raise HTTPException(status_code=404, detail='Route not found')
+
+    @app.get('/api/v1/stop/{snapshot_id}/{stop_id}/nearby')
+    def nearby(snapshot_id: str, stop_id: str, radius: float = Query(default=200, ge=10, le=1000),
+               limit: int = Query(default=30, ge=1, le=200)):
+        try:
+            return nearby_stops(app.state.con, snapshot_id, stop_id, radius_m=radius, limit=limit)
+        except KeyError:
+            raise HTTPException(status_code=404, detail='Stop not found')
 
     @app.get('/api/v1/stop/{snapshot_id}/{stop_id}/departures')
     def departures(snapshot_id: str,stop_id: str,date_value: date=Query(alias='date'),start_hour:int=0,end_hour:int=24):

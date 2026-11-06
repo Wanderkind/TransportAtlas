@@ -4,6 +4,7 @@ export type Route = {snapshot_id:string; source_id:string; route_id:string; shor
 export type Stop = {snapshot_id:string; source_id:string; stop_id:string; name:string; lat:number; lon:number};
 export type Departure = {trip_id:string; route_short_name:string; service_date:string; gtfs_time:string; local_departure:string; headsign:string; boarding_allowed:boolean; precision:string};
 export type FreqWindow = {trip_id:string; start_local:string; end_local:string; headway_seconds:number};
+export type NearbyStops = {radius_m:number;stops:Array<Stop&{distance_m:number;same_source:boolean}>;total:number;truncated:boolean;note:string};
 export type StopBoard = {stop:Stop; wall_date:string; departures:Departure[]; frequency_windows:FreqWindow[]; warning:string};
 export type NetworkFeature = {type:'Feature'; properties:{snapshot_id:string;source_id:string;route_id:string;uid:string;route_type:number;mode:string;color:string;quality:string};geometry:{type:'LineString';coordinates:number[][]}};
 export type Coverage = {total_route_records:number;routes_with_trip_references:number;active_routes:number;eligible_routes:number;rendered_routes:number;routes_without_trip_references:number;routes_with_insufficient_geometry:number;routes_omitted_by_limits:number;inactive_routes_excluded:number;partially_rendered_routes:number};
@@ -27,6 +28,7 @@ export const endpoints={
  routes:(d:string)=>`/api/v1/routes?date=${q(d)}`,
  stops:(d:string,m:string,active:boolean,sources?:string,search?:string)=>`/api/v1/stops?limit=20000&date=${q(d)}&mode=${q(m)}&active_only=${active}${sources!==undefined?`&sources=${q(sources)}`:''}${search?`&search=${q(search)}`:''}`,
  network:(d:string,m:string,s:string,active:boolean,sources?:string)=>`/api/v1/network/geometry?date=${q(d)}&mode=${q(m)}&active_only=${active}${s?`&source=${q(s)}`:''}${sources!==undefined?`&sources=${q(sources)}`:''}`,
+ nearby:(s:Stop,radius=200)=>`/api/v1/stop/${q(s.snapshot_id)}/${q(s.stop_id)}/nearby?radius=${radius}`,
  board:(s:Stop,d:string)=>`/api/v1/stop/${q(s.snapshot_id)}/${q(s.stop_id)}/departures?date=${q(d)}`,
  timetable:(r:Route,d:string)=>`/api/v1/route/${q(r.snapshot_id)}/${q(r.route_id)}/timetable?date=${q(d)}&limit=200`,
  timetablePage:(r:Route,d:string,direction:string,variant:string,offset:number)=>`/api/v1/route/${q(r.snapshot_id)}/${q(r.route_id)}/timetable?date=${q(d)}&limit=200&offset=${offset}&direction=${q(direction)}&variant=${q(variant)}`,

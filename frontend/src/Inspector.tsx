@@ -1,10 +1,25 @@
 import {useEffect, useLayoutEffect, useState} from 'react';
-import type {RouteTimetable as Timetable} from './api';
+import type {NearbyStops, RouteTimetable as Timetable} from './api';
 import {endpoints, NetworkGeometry, Route, RouteTimetable, Snapshot, Stop, StopBoard, TimetableTrip, TripDetail} from './api';
 import {useKeyedRequest} from './useKeyedRequest';
 
 const clock=(s:string|null|undefined)=>s?.slice(11,16)||'—';
 const gtfs=(s:number|null,offset=0)=>s===null?'—':`${Math.floor((s+offset)/3600).toString().padStart(2,'0')}:${Math.floor(((s+offset)%3600)/60).toString().padStart(2,'0')}`;
+
+/** Other source records within a straight-line radius; proximity, not a verified match. */
+function Nearby({stop,onStop}:{stop:Stop;onStop:(s:Stop)=>void}){
+ const request=useKeyedRequest<NearbyStops>(endpoints.nearby(stop),`${stop.snapshot_id}|${stop.stop_id}|nearby`);
+ const data=request.data;
+ return <details className="nearby" open><summary>Nearby stop records within 200 m{data?` (${data.total})`:''}</summary>
+   {request.error?<p role="alert">Nearby stops unavailable: {request.error}</p>:!data?<p role="status">Finding nearby stops…</p>:<>
+    {data.stops.map(s=><button type="button" className="nearby-stop" key={s.snapshot_id+s.stop_id} data-stop-id={s.stop_id} data-source-id={s.source_id}
+      onClick={()=>onStop({snapshot_id:s.snapshot_id,source_id:s.source_id,stop_id:s.stop_id,name:s.name,lat:s.lat,lon:s.lon})}>
+      <span>{s.name||s.stop_id}<small>{s.source_id}{s.same_source?' · same source':''}</small></span><strong>{Math.round(s.distance_m)} m</strong></button>)}
+    {!data.stops.length&&<p>No other stop records within {data.radius_m} m.</p>}
+    {data.truncated&&<p className="warning">Showing {data.stops.length} of {data.total} nearby records.</p>}
+    <small>{data.note}</small></>}
+ </details>;
+}
 
 function Provenance({snapshot}:{snapshot:Snapshot|undefined}){
  if(!snapshot)return null;
@@ -86,7 +101,7 @@ export function Inspector({route,stop,date,timetable,board,timetableError,boardE
    {trip&&<><div className="section-heading"><span>Ordered stops · {trip.trip.trip_id}</span></div>
     <p className="muted">{instance?'GTFS service-day times, including hours beyond 24:00.':'Template times only; select an exact departure to inspect an operating instance.'} {!trip.geometry.features.length?'No usable geometry was supplied.':trip.geometry.features[0]?.properties.quality==='schematic-stop-link'?'Dashed geometry is schematic.':'Geometry from the source feed.'}</p>
     <ol className="trip-stops" data-trip-id={trip.trip.trip_id} data-direction={direction} data-variant-id={variant}>{trip.stops.map(s=><li className="trip-stop" data-stop-id={s.stop_id} data-arrival={gtfs(s.arrival_sec,offset)} data-departure={gtfs(s.departure_sec,offset)} key={s.stop_sequence}><button type="button" onClick={()=>onStop({snapshot_id:route.snapshot_id,source_id:route.source_id,...s})}>{s.name||s.stop_id}</button><small>Arr {gtfs(s.arrival_sec,offset)} · Dep {gtfs(s.departure_sec,offset)}{s.timepoint===0?' · estimated timepoint':''}{s.pickup_type===1?' · no boarding':''}{s.drop_off_type===1?' · no alighting':''}</small></li>)}</ol></>}
-  </>:stop?<><div className="inspect-label">STOP</div><h2>{stop.name||stop.stop_id}</h2><p>{stop.source_id} · {stop.stop_id}</p><Provenance snapshot={snapshot}/>
+  </>:stop?<><div className="inspect-label">STOP</div><h2>{stop.name||stop.stop_id}</h2><p>{stop.source_id} · {stop.stop_id}</p><Provenance snapshot={snapshot}/><Nearby stop={stop} onStop={onStop}/>
    {boardError?<p role="alert">Stop board unavailable: {boardError}</p>:!board?<p role="status">Loading stop departures…</p>:<><p>{board.departures.length} exact departures on local date {date}</p><div className="departure-list">{board.departures.map((d,i)=><div className="departure" key={i}><strong>{clock(d.local_departure)}</strong><span>{d.route_short_name} · {d.headsign}<small>Service day {d.service_date} · GTFS {d.gtfs_time}{!d.boarding_allowed?' · no boarding':''}</small></span></div>)}</div>
     {board.frequency_windows.map((w,i)=><p className="freq-window" key={i}>{clock(w.start_local)}–{clock(w.end_local)} · every ~{w.headway_seconds/60} min (not exact)</p>)}
     {!board.departures.length&&!board.frequency_windows.length&&<p>No departures reported for this date.</p>}</>}

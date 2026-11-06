@@ -130,7 +130,8 @@ re-observe its original network retrieval. Keep that distinction in reports.
 ~~Timetable pagination~~ (done Nov 7: `offset`, server-side direction/variant
 filters, Load more); external GTFS validation; more optional GTFS fields;
 ~~cache lifecycle~~ (network responses LRU-bounded Nov 7; shape store compacts deltas); historical snapshot selection; broader regional/country
-validation; physical-stop matching and connectivity/accessibility analysis.
+validation; physical-stop matching (a first step landed Nov 7: cross-source
+nearby stop records, explicitly proximity only) and connectivity/accessibility analysis.
 Prioritize the rendering blocker and measured latency before these features.
 
 ## Documentation to finalize
