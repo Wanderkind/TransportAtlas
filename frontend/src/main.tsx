@@ -11,7 +11,7 @@ import './styles.css';
 
 const STREETS_STYLE='https://tiles.openfreemap.org/styles/liberty';
 const PLAIN_STYLE:maplibregl.StyleSpecification={version:8,sources:{},layers:[{id:'background',type:'background',paint:{'background-color':'#eef3f0'}}]};
-function todayISO(){const d=new Date();return `${d.getFullYear()}-${`${d.getMonth()+1}`.padStart(2,'0')}-${`${d.getDate()}`.padStart(2,'0')}`}
+function todayISO(){const requested=new URLSearchParams(window.location.search).get('date');if(requested && /^\d{4}-\d{2}-\d{2}$/.test(requested))return requested;const d=new Date();return `${d.getFullYear()}-${`${d.getMonth()+1}`.padStart(2,'0')}-${`${d.getDate()}`.padStart(2,'0')}`}
 function routeColor(n:number){return [0,1,2,5,12].includes(n)?'#b36b9e':n===4?'#229a90':[3,11].includes(n)?'#3583be':'#bd863b'}
 const emptyGeoJSON=():FeatureCollection=>({type:'FeatureCollection',features:[]});
 const emptyNetwork=():NetworkGeometry=>({type:'FeatureCollection',features:[],metadata:{service_date:'',active_only:true,source_count:0,route_count:0,feature_count:0,point_count:0,truncated:false,missing_geometry_routes:0,warning:null}});
