@@ -6,22 +6,32 @@
     "arst": {
       "publisher": "ARST SpA",
       "official_dataset_id": "R_SARDEG:TRASP_00001",
-      "landing_url": "https://www.sardegnamobilita.it/open-data/quadri-orari-arst"
+      "landing_url": "https://www.sardegnamobilita.it/open-data/quadri-orari-arst",
+      "download_hosts": []
     },
     "aspo": {
       "publisher": "ASPO Olbia",
       "official_dataset_id": "R_SARDEG:TRASP_00003",
-      "landing_url": "https://www.sardegnamobilita.it/open-data/quadri-orari-aspo"
+      "landing_url": "https://www.sardegnamobilita.it/open-data/quadri-orari-aspo",
+      "download_hosts": [
+        "aspo.it",
+        "www.aspo.it"
+      ]
     },
     "atp_sassari": {
       "publisher": "ATP Sassari",
       "official_dataset_id": "R_SARDEG:TRASP_00004",
-      "landing_url": "https://www.sardegnamobilita.it/open-data/quadri-orari-atp-sassari"
+      "landing_url": "https://www.sardegnamobilita.it/open-data/quadri-orari-atp-sassari",
+      "download_hosts": [
+        "atpsassari.it",
+        "www.atpsassari.it"
+      ]
     },
     "trenitalia_sardegna": {
       "publisher": "Direzione Generale dei trasporti / Trenitalia",
       "official_dataset_id": "R_SARDEG:TRASP_00008",
-      "landing_url": "https://www.sardegnamobilita.it/open-data/quadri-orari-trenitalia"
+      "landing_url": "https://www.sardegnamobilita.it/open-data/quadri-orari-trenitalia",
+      "download_hosts": []
     }
   }
 }

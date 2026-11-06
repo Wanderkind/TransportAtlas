@@ -23,14 +23,15 @@ from uuid import uuid4
 from .gtfs import FeedError, MAX_COMPRESSED
 
 DEFAULT_CATALOG = Path(__file__).resolve().parents[2] / 'configs' / 'sardinia_sources.json'
-ALLOWED_BASE = 'sardegnamobilita.it'
+ALLOWED_OFFICIAL_HOSTS = {'sardegnamobilita.it', 'www.sardegnamobilita.it'}
 
 
-def safe_url(url: str) -> str:
+def safe_url(url: str, *, allowed_hosts: set[str] | None = None) -> str:
     p = urlsplit(url)
     host = (p.hostname or '').lower().rstrip('.')
-    if p.scheme != 'https' or not (host == ALLOWED_BASE or host.endswith('.' + ALLOWED_BASE)):
-        raise FeedError('Resource URL must be HTTPS on the official Sardegna Mobilità domain')
+    hosts = ALLOWED_OFFICIAL_HOSTS if allowed_hosts is None else allowed_hosts
+    if p.scheme != 'https' or not host or host not in hosts:
+        raise FeedError('Resource URL must use HTTPS on an explicitly approved official or operator host')
     if p.username or p.password or p.port not in (None, 443):
         raise FeedError('Resource URL includes unsupported credentials or port')
     return url
@@ -74,7 +75,9 @@ def candidates(html: str, landing_url: str) -> list[dict]:
             continue
         url = urljoin(landing_url, raw)
         try:
-            safe_url(url)
+            # External resource anchors are discovery evidence only; download
+            # authorization is separately source-scoped via the manifest.
+            safe_url(url, allowed_hosts={(urlsplit(url).hostname or '').lower()})
         except FeedError:
             continue
         path = urlsplit(url).path.lower()
@@ -99,18 +102,23 @@ def candidates(html: str, landing_url: str) -> list[dict]:
 
 
 class _OfficialRedirects(HTTPRedirectHandler):
+    def __init__(self, allowed_hosts=None):
+        super().__init__()
+        self.allowed_hosts = ALLOWED_OFFICIAL_HOSTS if allowed_hosts is None else allowed_hosts
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        safe_url(newurl)
+        safe_url(newurl, allowed_hosts=self.allowed_hosts)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-_OFFICIAL_OPENER = build_opener(_OfficialRedirects())
+def _opener(allowed_hosts=None):
+    return build_opener(_OfficialRedirects(allowed_hosts))
 
 
 def _get(url: str, *, timeout: int = 30, max_bytes: int = 3_000_000) -> tuple[bytes, str]:
     safe_url(url)
     request = Request(url, headers={'User-Agent': 'TransportAtlas/0.3 (GTFS research; local importer)', 'Accept': '*/*'})
-    with _OFFICIAL_OPENER.open(request, timeout=timeout) as response:
+    with _opener().open(request, timeout=timeout) as response:
         final_url = safe_url(response.geturl())
         length = response.headers.get('Content-Length')
         if length and int(length) > max_bytes:
@@ -127,6 +135,9 @@ def catalog(catalog_file: Path = DEFAULT_CATALOG) -> dict:
         raise FeedError('Invalid official feed manifest')
     for src in data['sources'].values():
         safe_url(src['landing_url'])
+        hosts = src.get('download_hosts', [])
+        if not isinstance(hosts,list) or any(not isinstance(h,str) or not h or '/' in h or ':' in h for h in hosts):
+            raise FeedError('Invalid operator download host allowlist')
     return data
 
 
@@ -147,7 +158,8 @@ def download(source: str, destination: Path, *, catalog_file: Path = DEFAULT_CAT
     if entry is None:
         raise FeedError(f'Unknown official source: {source}')
     discovered = discover(source, catalog_file=catalog_file) if resource_url is None else None
-    links = ([{'url': safe_url(resource_url), 'label': 'operator supplied official download URL', 'score': 99}]
+    allowed = ALLOWED_OFFICIAL_HOSTS | set(entry.get('download_hosts',[]))
+    links = ([{'url': safe_url(resource_url, allowed_hosts=allowed), 'label': 'operator supplied official download URL', 'score': 99}]
              if resource_url else discovered['resource_candidates'])
     if not links:
         raise FeedError('Official page has no discoverable GTFS download link. Download the ZIP manually from the official page.')
@@ -159,12 +171,12 @@ def download(source: str, destination: Path, *, catalog_file: Path = DEFAULT_CAT
     for item in links[:8]:
         temp = destination.with_name(destination.name + '.' + uuid4().hex + '.part')
         try:
-            url = safe_url(item['url'])
+            url = safe_url(item['url'], allowed_hosts=allowed)
             h = hashlib.sha256()
             total = 0
             req = Request(url, headers={'User-Agent': 'TransportAtlas/0.3 (GTFS research; local importer)'})
-            with _OFFICIAL_OPENER.open(req, timeout=timeout) as stream, temp.open('wb') as output:
-                final = safe_url(stream.geturl())
+            with _opener(allowed).open(req, timeout=timeout) as stream, temp.open('wb') as output:
+                final = safe_url(stream.geturl(), allowed_hosts=allowed)
                 n = stream.headers.get('Content-Length')
                 if n and int(n) > MAX_COMPRESSED:
                     raise FeedError('GTFS ZIP too large')

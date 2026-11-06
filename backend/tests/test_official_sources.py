@@ -24,7 +24,8 @@ def test_manifest_and_landing_pages():
 
 def test_discovery_respects_origin_and_avoids_icon():
     items=official.candidates(PAGE,'https://www.sardegnamobilita.it/open-data/quadri-orari-aspo')
-    assert len(items)==1
+    assert len(items)==2
+    # The source page can mention third-party links; only the manifest may authorize downloads.
     assert items[0]['url'].endswith('/aspo-2026.zip')
     assert items[0]['score']>=12
 
@@ -65,7 +66,8 @@ def test_download_uses_real_zip_validation_and_writes_provenance(tmp_path):
         for name in ('agency','routes','trips','stops','stop_times'):
             z.writestr(name+'.txt','sample\n')
     output=tmp_path/'aspo.zip'
-    with patch.object(official._OFFICIAL_OPENER,'open',return_value=FakeResponse(b.getvalue())):
+    with patch.object(official,'_opener') as opener:
+        opener.return_value.open.return_value=FakeResponse(b.getvalue())
         metadata=official.download('aspo',output,resource_url='https://www.sardegnamobilita.it/files/aspo.zip')
     assert output.read_bytes()==b.getvalue()
     assert metadata['source_id']=='aspo'
@@ -74,6 +76,14 @@ def test_download_uses_real_zip_validation_and_writes_provenance(tmp_path):
 
 def test_download_refuses_html_not_zip(tmp_path):
     dest=tmp_path/'test.zip'
-    with patch.object(official._OFFICIAL_OPENER,'open',return_value=FakeResponse(b'<html>no</html>')):
+    with patch.object(official,'_opener') as opener:
+        opener.return_value.open.return_value=FakeResponse(b'<html>no</html>')
         with pytest.raises(FeedError):official.download('aspo',dest,resource_url='https://www.sardegnamobilita.it/files/aspo.zip')
     assert not dest.exists()
+
+
+def test_operator_host_is_explicitly_scoped():
+    hosts = official.ALLOWED_OFFICIAL_HOSTS | set(official.catalog()['sources']['aspo']['download_hosts'])
+    assert official.safe_url('https://www.aspo.it/wp-content/uploads/open_data.zip', allowed_hosts=hosts)
+    with pytest.raises(FeedError):
+        official.safe_url('https://atpsassari.it/media/files/atpss-gtfs.zip', allowed_hosts=hosts)
