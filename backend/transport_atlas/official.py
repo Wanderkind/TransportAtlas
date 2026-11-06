@@ -31,7 +31,7 @@ def safe_url(url: str, *, allowed_hosts: set[str] | None = None) -> str:
     host = (p.hostname or '').lower().rstrip('.')
     hosts = ALLOWED_OFFICIAL_HOSTS if allowed_hosts is None else allowed_hosts
     if p.scheme != 'https' or not host or host not in hosts:
-        raise FeedError('Resource URL must use HTTPS on an explicitly approved official or operator host')
+        raise FeedError(f'Resource URL rejected: scheme={p.scheme!r}, host={host[:120]!r} is not an approved HTTPS operator host')
     if p.username or p.password or p.port not in (None, 443):
         raise FeedError('Resource URL includes unsupported credentials or port')
     return url

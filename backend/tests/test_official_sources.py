@@ -87,3 +87,8 @@ def test_operator_host_is_explicitly_scoped():
     assert official.safe_url('https://www.aspo.it/wp-content/uploads/open_data.zip', allowed_hosts=hosts)
     with pytest.raises(FeedError):
         official.safe_url('https://atpsassari.it/media/files/atpss-gtfs.zip', allowed_hosts=hosts)
+
+
+def test_arst_host_verified_in_official_catalog():
+    hosts=official.ALLOWED_OFFICIAL_HOSTS | set(official.catalog()['sources']['arst']['download_hosts'])
+    assert official.safe_url('https://www.arstspa.info/arst-cagliari-it.zip', allowed_hosts=hosts)

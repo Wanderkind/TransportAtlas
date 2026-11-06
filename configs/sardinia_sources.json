@@ -7,7 +7,10 @@
       "publisher": "ARST SpA",
       "official_dataset_id": "R_SARDEG:TRASP_00001",
       "landing_url": "https://www.sardegnamobilita.it/open-data/quadri-orari-arst",
-      "download_hosts": []
+      "download_hosts": [
+        "arstspa.info",
+        "www.arstspa.info"
+      ]
     },
     "aspo": {
       "publisher": "ASPO Olbia",
