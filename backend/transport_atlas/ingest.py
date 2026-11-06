@@ -1,6 +1,7 @@
 """Immutable GTFS ingestion with source-scoped IDs and transactional activation."""
 from __future__ import annotations
 import hashlib
+import json
 import re
 import shutil
 from collections import defaultdict
@@ -8,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 from .gtfs import FeedError, clock_seconds, optional_int, optional_float, read_feed, service_date
-from .storage import one
+from .storage import one, insert_many
 
 WEEKDAYS = ("monday","tuesday","wednesday","thursday","friday","saturday","sunday")
 
@@ -108,6 +109,15 @@ def import_file(con, file: str | Path, *, source_id: str, archive_dir: str | Pat
         for chunk in iter(lambda:stream.read(1048576), b''):
             h.update(chunk)
     digest=h.hexdigest()
+    provenance_file = file.with_suffix(file.suffix + '.provenance.json')
+    provenance = None
+    if provenance_file.exists():
+        provenance = json.loads(provenance_file.read_text(encoding='utf-8'))
+        if provenance.get('source_id') != source_id or provenance.get('sha256') != digest:
+            raise FeedError('Download provenance does not match source or ZIP checksum')
+        retrieved = datetime.fromisoformat(provenance['retrieved_at'])
+        if retrieved.tzinfo is None:
+            raise FeedError('Download provenance retrieval timestamp requires a timezone')
     existing=one(con,"SELECT snapshot_id FROM feed_snapshots WHERE source_id=? AND content_sha256=? AND import_status='ready'",(source_id,digest))
     if existing:
         return dict(status="unchanged",snapshot_id=existing['snapshot_id'],source_id=source_id,sha256=digest)
@@ -127,6 +137,9 @@ def import_file(con, file: str | Path, *, source_id: str, archive_dir: str | Pat
             temporary.replace(archive_path)
         finally:
             temporary.unlink(missing_ok=True)
+    if provenance is not None:
+        archive_path.with_suffix('.zip.provenance.json').write_text(
+            json.dumps(provenance, indent=2), encoding='utf-8')
     calendar_dates = [service_date(r['start_date']) for r in data['calendar']] + [service_date(r['end_date']) for r in data['calendar']] + [service_date(r['date']) for r in data['calendar_dates']]
     feed_start=min(calendar_dates)
     feed_end=max(calendar_dates)
@@ -138,10 +151,13 @@ def import_file(con, file: str | Path, *, source_id: str, archive_dir: str | Pat
         if one(con,'SELECT source_id FROM feed_sources WHERE source_id=?',(source_id,)) is None:
             con.execute('INSERT INTO feed_sources VALUES(?,?,?,?,?)',
                         (source_id,publisher or source_id,landing_url,None,license_name))
+        if provenance is not None:
+            con.execute('UPDATE feed_sources SET download_url=? WHERE source_id=?',
+                        (provenance.get('download_url'), source_id))
         con.execute('INSERT INTO feed_snapshots VALUES(?,?,?,?,?,?,?,?,?)',
-                    (snapshot_id,source_id,digest,datetime.now(timezone.utc).isoformat(),str(archive_path),'ready',tz,feed_start,feed_end))
+                    (snapshot_id,source_id,digest,provenance['retrieved_at'] if provenance else datetime.now(timezone.utc).isoformat(),str(archive_path),'ready',tz,feed_start,feed_end))
         def insert(table,stmt,objects):
-            if objects: con.executemany(stmt, objects)
+            insert_many(con, table, stmt, objects)
         insert('agencies','INSERT INTO agencies VALUES(?,?,?,?,?)', [
             (snapshot_id,a['agency_id'],a['agency_name'],a.get('agency_url'),a['agency_timezone']) for a in data['agency']])
         insert('routes','INSERT INTO routes VALUES(?,?,?,?,?,?,?)', [

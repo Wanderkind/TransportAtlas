@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone, time
 from zoneinfo import ZoneInfo
 from .storage import rows, one
+from .provenance import declared_bounds
 
 WEEKDAYS = ("monday","tuesday","wednesday","thursday","friday","saturday","sunday")
 
@@ -44,9 +45,12 @@ def _base_departure(con, snapshot_id, trip_id) -> int | None:
 def trip_departure_offsets(con, snapshot_id, trip_id, stop_sec):
     """Return exact stop time(s), and non-exact frequency window descriptors separately."""
     freqs = _freq_rows(con,snapshot_id,trip_id)
+    return _departure_offsets(freqs, _base_departure(con,snapshot_id,trip_id) if freqs else None, stop_sec)
+
+
+def _departure_offsets(freqs, base, stop_sec):
     if not freqs:
         return ([stop_sec] if stop_sec is not None else []), []
-    base = _base_departure(con,snapshot_id,trip_id)
     if base is None or stop_sec is None:
         return [], [dict(precision='unknown',reason='Missing template stop time')]
     offset=stop_sec-base
@@ -66,14 +70,17 @@ def daily_summary(con, service_day: date | str) -> dict:
     results=[]
     for snapshot in active_snapshots(con):
         sid=snapshot['snapshot_id']
+        declared_start, declared_end = declared_bounds(snapshot)
         services=active_services(con,sid,day)
-        trips=rows(con,"SELECT trip_id,route_id FROM trips WHERE snapshot_id=?",(sid,))
         active=rows(con,"SELECT trip_id,route_id,service_id FROM trips WHERE snapshot_id=?",(sid,))
         active=[t for t in active if t['service_id'] in services]
+        frequencies = {}
+        for f in rows(con, 'SELECT * FROM frequencies WHERE snapshot_id=?', (sid,)):
+            frequencies.setdefault(f['trip_id'], []).append(f)
         scheduled=0
         estimated_windows=0
         for t in active:
-            freqs=_freq_rows(con,sid,t['trip_id'])
+            freqs=frequencies.get(t['trip_id'], [])
             if not freqs:
                 scheduled += 1
             else:
@@ -81,7 +88,10 @@ def daily_summary(con, service_day: date | str) -> dict:
                 estimated_windows += sum(1 for f in freqs if f['exact_times']==0)
         results.append(dict(source_id=snapshot['source_id'],snapshot_id=sid,
             feed_start=snapshot['feed_start'],feed_end=snapshot['feed_end'],
-            service_date_covered=snapshot['feed_start']<=day.isoformat()<=snapshot['feed_end'],
+            declared_feed_start=declared_start, declared_feed_end=declared_end,
+            service_date_covered=(snapshot['feed_start']<=day.isoformat()<=snapshot['feed_end']
+                and (not declared_start or day.isoformat()>=declared_start)
+                and (not declared_end or day.isoformat()<=declared_end)),
             total_route_records=one(con,'SELECT COUNT(*) AS n FROM routes WHERE snapshot_id=?',(sid,))['n'],
             total_stop_records=one(con,'SELECT COUNT(*) AS n FROM stops WHERE snapshot_id=?',(sid,))['n'],
             active_trip_templates=len(active),
@@ -116,6 +126,19 @@ def stop_board(con, snapshot_id: str, stop_id: str, wall_date: date | str,
     exact_departures=[]
     freq_windows=[]
     active_cache={}
+    frequencies = {}
+    for f in rows(con, 'SELECT * FROM frequencies WHERE snapshot_id=?', (snapshot_id,)):
+        frequencies.setdefault(f['trip_id'], []).append(f)
+    bases = {}
+    if frequencies:
+        for first in rows(con, '''SELECT st.trip_id,st.departure_sec,st.arrival_sec FROM stop_times st
+            JOIN (SELECT trip_id,MIN(stop_sequence) AS first_seq FROM stop_times
+                  WHERE snapshot_id=? AND trip_id IN (SELECT trip_id FROM frequencies WHERE snapshot_id=?)
+                  GROUP BY trip_id) first ON first.trip_id=st.trip_id AND first.first_seq=st.stop_sequence
+            WHERE st.snapshot_id=?''', (snapshot_id,snapshot_id,snapshot_id)):
+            bases[first['trip_id']] = first['departure_sec'] if first['departure_sec'] is not None else first['arrival_sec']
+    offsets = {(item['trip_id'],item['departure_sec']): _departure_offsets(
+        frequencies.get(item['trip_id'], []), bases.get(item['trip_id']), item['departure_sec']) for item in stop_rows}
     for service_d in (d-timedelta(days=k) for k in range(max_days-1,-2,-1)):
         for item in stop_rows:
             cachekey=(service_d,item['service_id'])
@@ -125,7 +148,7 @@ def stop_board(con, snapshot_id: str, stop_id: str, wall_date: date | str,
                 continue
             zone=item['agency_timezone']
             display_zone=stop['timezone'] or zone
-            exact,windows=trip_departure_offsets(con,snapshot_id,item['trip_id'],item['departure_sec'])
+            exact,windows=offsets[(item['trip_id'],item['departure_sec'])]
             for seconds in exact:
                 instant=gtfs_instant(service_d,seconds,zone).astimezone(ZoneInfo(display_zone))
                 local=instant.replace(tzinfo=None)
@@ -153,6 +176,13 @@ def stop_board(con, snapshot_id: str, stop_id: str, wall_date: date | str,
 def trip_stop_times(con, snapshot_id: str, trip_id: str) -> dict:
     trip=one(con,'SELECT * FROM trips WHERE snapshot_id=? AND trip_id=?',(snapshot_id,trip_id))
     if trip is None: raise KeyError('Unknown trip')
-    return dict(trip=trip,stops=rows(con,"""SELECT st.*,s.name,s.lat,s.lon
+    stops = rows(con,"""SELECT st.*,s.name,s.lat,s.lon
       FROM stop_times st JOIN stops s ON s.snapshot_id=st.snapshot_id AND s.stop_id=st.stop_id
-      WHERE st.snapshot_id=? AND st.trip_id=? ORDER BY st.stop_sequence""",(snapshot_id,trip_id)))
+      WHERE st.snapshot_id=? AND st.trip_id=? ORDER BY st.stop_sequence""",(snapshot_id,trip_id))
+    shape = rows(con, 'SELECT lon,lat FROM shapes WHERE snapshot_id=? AND shape_id=? ORDER BY point_sequence',
+                 (snapshot_id, trip['shape_id'])) if trip['shape_id'] else []
+    quality = 'source-shape' if len(shape) >= 2 else 'schematic-stop-link'
+    points = shape if len(shape) >= 2 else [s for s in stops if s['lon'] is not None and s['lat'] is not None]
+    features = [{'type': 'Feature', 'properties': {'quality': quality},
+                 'geometry': {'type': 'LineString', 'coordinates': [[p['lon'],p['lat']] for p in points]}}] if len(points)>=2 else []
+    return dict(trip=trip, stops=stops, geometry={'type': 'FeatureCollection', 'features': features})

@@ -2,6 +2,10 @@
 from __future__ import annotations
 import os
 import sqlite3
+import csv
+import re
+from tempfile import TemporaryDirectory
+from uuid import uuid4
 from pathlib import Path
 
 SCHEMA = """
@@ -111,3 +115,24 @@ def rows(con, sql: str, params: tuple = ()) -> list[dict]:
 
 def one(con, sql: str, params: tuple = ()) -> dict | None:
     return next(iter(rows(con, sql, params)), None)
+
+
+def insert_many(con, table: str, statement: str, values: list[tuple]):
+    """Bulk COPY inside the caller's transaction; retain SQLite test support."""
+    if not values:
+        return
+    if type(con).__module__ != '_duckdb' or len(values) < 100:
+        con.executemany(statement, values)
+        return
+    if not re.fullmatch('[a-z_]+', table):
+        raise ValueError('Unsafe internal table identifier')
+    null_marker = '__null_' + uuid4().hex
+    while any(cell == null_marker for row in values for cell in row):
+        null_marker = '__null_' + uuid4().hex
+    with TemporaryDirectory(prefix='transport-atlas-import-') as directory:
+        path = Path(directory) / 'rows.csv'
+        with path.open('w', encoding='utf-8', newline='') as stream:
+            writer = csv.writer(stream)
+            writer.writerows(tuple(null_marker if cell is None else cell for cell in row) for row in values)
+        quoted_path = str(path).replace("'", "''")
+        con.execute(f"COPY {table} FROM '{quoted_path}' (FORMAT CSV, HEADER FALSE, NULL '{null_marker}', AUTO_DETECT FALSE)")

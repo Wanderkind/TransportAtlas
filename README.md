@@ -1,122 +1,190 @@
-# Transport Atlas
+# TransportAtlas
 
-Private, local-first GTFS Schedule importer and public-transport research dashboard. **Version 0.2 development branch adds multi-route visualization and timetable inspection; it is not yet the full agreed MVP.** Its core use is importing real agency GTFS feeds into source-isolated snapshots, querying scheduled service by date, and exploring stops and routes in a preliminary browser UI.
+Local-first GTFS Schedule research dashboard: Python, FastAPI, DuckDB, React,
+TypeScript, Vite and MapLibre. Explore imported transport networks, route variants,
+ordered trip stops and calendars. This is a research atlas, not a journey planner
+or a claim of complete real-world transport coverage.
 
-## What works
+**Development and verification run locally. GitHub Actions are not required.**
+No accounts, paid infrastructure, public deployment or API keys are needed.
 
-- Import a GTFS ZIP from the local filesystem; reject unsafe ZIPs, invalid key references, and duplicate records.
-- Archive SHA-256 identified original feed bytes, with one selected snapshot per source and no cross-feed key collisions.
-- Record basic agencies, routes, stops, trips, stop times, weekly calendars, date exceptions, shapes, and frequencies in SQL.
-- Query scheduled-service counts on a GTFS service date, exact departures on a stop-local date (including trips whose GTFS time exceeds 24 hours), and non-exact headway windows **without inventing departures**.
-- Expose read-only FastAPI endpoints with date-aware route flags, stops, geometry, and stop departure boards.
-- Run a React + MapLibre browser atlas showing simultaneous imported route geometry, date/mode/source filters, route highlighting, stop inspectors, and route timetable summaries. The frontend build is checked in a separate GitHub Actions workflow.
+## Install on Windows
 
-**Not yet complete:** verified four-operator live imports, MobilityData external validator integration, dataset-selection history UI, pattern grouping, advanced statistics, complete feed coverage, imported licensing metadata, sophisticated maps/tiles, exports, and production performance improvements.
-
-## Requirements
-
-Windows 10/11, Python 3.11 or later (3.12 recommended), Node.js 20 or later, and network access for the initial dependency install. Actual GTFS ZIPs must be obtained separately from a data provider. No accounts, API keys, cloud services, or public deployment are needed.
-
-## Official Sardinia GTFS sources (experimental)
-
-After installing the backend, use `python -m transport_atlas fetch-official --source aspo` to download a feed from the official publisher. Add `--discover-only` to inspect discovered resource URLs first. Follow [the validation guide](docs/REAL_FEED_VALIDATION.md) for source attribution, provenance, and imports. If a download link is not discoverable, download the GTFS ZIP manually from the official landing page and use the existing `import --file` workflow. **No real operator data is bundled.**
-
-## Getting started (Windows PowerShell)
+Use Python 3.12 (minimum 3.11) and Node.js 20.19+ or 22.12+. The local audit used
+Python 3.12, Node 24.19.0 and npm 11.17.0. System `python` may select an older
+version; use the virtual environment explicitly.
 
 ```powershell
-cd D:\Path\To\transport-atlas
+cd C:\Users\User\Desktop\TransportAtlas
 py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
-```
-
-If PowerShell execution policy prevents activating the virtualenv, use `.\.venv\Scripts\python.exe` explicitly instead of changing your security policy.
-
-**Import the included *synthetic* demonstration dataset:**
-
-```powershell
-python -m transport_atlas import --file backend\tests\fixtures\synthetic_sardinia.zip --source synthetic_demo --publisher "SYNTHETIC (not real service)"
-python -m transport_atlas summary --date 2026-11-06
-python -m transport_atlas sources
-python -m pytest -q backend/tests
-```
-
-The fixture is completely fictional. The displayed stop locations are approximate coordinates for testing the interface, not evidence of actual services.
-
-**Import an actual GTFS Schedule ZIP:**
-
-1. Download a ZIP from the [Sardegna Mobilità catalog](https://www.sardegnamobilita.it/open-data/trasporti). Confirm that the ZIP contains `agency.txt`, `routes.txt`, etc., and inspect its license/attribution terms.
-2. Import the downloaded ZIP; for example:
-
-```powershell
-python -m transport_atlas import --file "C:\Downloads\arst-gtfs.zip" --source arst --publisher ARST --landing-url https://www.sardegnamobilita.it/open-data/trasporti
-python -m transport_atlas summary --date 2026-11-06
-```
-
-Do not assume the example filename corresponds to an actual provider filename or that a feed necessarily covers the selected date.
-
-**Run the backend** (first terminal):
-
-```powershell
-python -m transport_atlas serve
-# Local API health: http://127.0.0.1:8000/api/v1/health
-# OpenAPI docs:      http://127.0.0.1:8000/docs
-```
-
-**Run the React frontend** (second terminal):
-
-```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,browser]"
 cd frontend
-npm install
-npm run dev
-# http://127.0.0.1:5173
+npm ci
+cd ..
 ```
 
-The map defaults to the [OpenFreeMap Liberty](https://openfreemap.org/quick_start/) online street basemap; use the **Plain map** button for an offline-compatible blank map. The app automatically falls back to plain mode if the online style cannot load. Actual route geometry and timetables remain local.
+Skip installation when the existing environment works. The browser extra requires
+Chrome; Selenium Manager obtains its driver on first use. `tzdata` supplies IANA
+timezone rules on Windows. Official downloads use native Windows certificate
+validation through `truststore`; HTTPS verification and source allowlists remain
+enforced. Frontend versions are locked in `frontend/package-lock.json`.
 
-Stop the backend before running an import command against the same DuckDB file; concurrent cross-process write access is not yet supported. Restart the backend to load the updated selection.
+## Import actual Sardinian feeds
 
-## CLI
-
-```text
-python -m transport_atlas [--db PATH] [--backend duckdb|sqlite] COMMAND
-
-Commands:
-  import --file ZIP --source ID [--publisher TEXT] [--landing-url URL] [--license NAME] [--archive PATH]
-  summary --date YYYY-MM-DD
-  departures --snapshot SHA --stop ID --date YYYY-MM-DD [--start-hour N] [--end-hour N]
-  sources
-  serve [--port 8000]
-```
-
-DuckDB is the default. SQLite is supported exclusively as a zero-extra-dependency **test fallback**, for example `python -m transport_atlas --backend sqlite --db demo.sqlite summary --date 2026-11-06`; do not treat SQLite performance or spatial support as equivalent to DuckDB.
-
-## Design choices and caveats
-
-- The dataset identifies individual GTFS records by `(snapshot_id, GTFS ID)`; identical IDs in different feeds never collide.
-- A service date is not necessarily the same as the wall-clock date of an arrival or departure. GTFS times are stored as integer seconds and converted using the agency timezone and the noon-minus-12-hours service-day convention.
-- `frequencies.txt` entries with `exact_times=1` are expanded into scheduled instances; `exact_times=0` are labeled headway windows, **not** precise departures. Frequency-window estimates are not conflated with confirmed trip counts.
-- Geographic geometry from `shapes.txt` is identified as source geometry; when unavailable, direct stop-to-stop lines are explicitly labeled *schematic*.
-- Date-range warnings indicate only what is contained in the currently imported data; they do not prove a route is absent in the real world.
-- The simple API selects the most recently imported snapshot for each source. Reimporting an older snapshot already archived does not automatically reactivate it. Full selection-version management is planned.
-- The initial importer intentionally supports scheduled fixed-stop GTFS feeds, not GTFS-Flex; large or complex national feeds may need additional validation, optimization, and optional-field handling.
-
-## Development and testing
+**Stop the backend before importing.** The official workflow discovers publisher
+links from Sardegna Mobilità and enforces approved HTTPS hosts and redirects.
 
 ```powershell
-python -m pytest -q backend/tests
+.\scripts\stop_local.ps1
+.\.venv\Scripts\python.exe scripts/import_local_feeds.py --sources aspo,trenitalia_sardegna,arst,atp_sassari
+.\.venv\Scripts\python.exe -m transport_atlas summary --date 2026-11-06
 ```
 
-The source includes generated synthetic test feeds and test cases for weekly plus exception calendars, calendar-dates-only feeds, duplicate IDs across sources, 25:15:00 stop times, exact and non-exact frequencies, Europe/Rome DST, unsafe ZIPs, Unicode IDs, and transactional failure preservation. GitHub Actions contains separate Python test and frontend build workflows.
+All feeds coexist in `data/transport_atlas.duckdb`, with source-scoped identities.
+The checker reuses cached ZIPs, verifies SHA-256 and ZIP CRC, reconciles raw/database
+table counts and evaluates Friday through Monday service calendars. Evidence is
+saved to `data/local-verification/feeds.json`.
 
-## Project references
+Recheck cached data without network access or replacing the original timing report:
 
-- [Detailed approved MVP specification](docs/MVP_SPEC.md)
-- [Initial milestone report](docs/IMPLEMENTATION_STATUS.md)
-- [v0.2 geographic atlas implementation and limitations](docs/V02_NETWORK_ATLAS.md)
-- [GTFS reference](https://gtfs.org/documentation/schedule/reference/)
-- [Sardegna Mobilità](https://www.sardegnamobilita.it/open-data/trasporti)
+```powershell
+.\.venv\Scripts\python.exe scripts/import_local_feeds.py --offline --sources aspo,trenitalia_sardegna,arst,atp_sassari --report feeds-recheck.json
+```
 
-## GitHub repository
+Unchanged imports do not reinsert data. To intentionally retrieve a newer feed,
+use the official CLI; earlier content-addressed archives remain available:
 
-The project is maintained at [Wanderkind/TransportAtlas](https://github.com/Wanderkind/TransportAtlas). Check the repository visibility before sharing imported data or licensing-restricted documents. The repository should contain **code and synthetic fixtures only**, never provider data until reuse rights are established.
+```powershell
+.\.venv\Scripts\python.exe -m transport_atlas fetch-official --source aspo --discover-only
+.\.venv\Scripts\python.exe -m transport_atlas fetch-official --source aspo
+.\.venv\Scripts\python.exe -m transport_atlas import --file data\downloads\aspo.zip --source aspo --publisher "ASPO Olbia" --landing-url https://www.sardegnamobilita.it/open-data/quadri-orari-aspo
+```
+
+Manual ZIP import is supported. Without a download sidecar, its timestamp means
+local import time, not verified upstream retrieval. Reimporting an already archived
+older snapshot does not automatically reactivate it. Raw ZIPs retain optional GTFS
+fields that the normalized model does not use; the checker lists those fields and
+declared `feed_info`. Review provider licensing before redistributing feed bytes.
+
+ATP Sassari is now locally verified from a directly discovered approved HTTPS
+operator URL, `https://atpsassari.it/media/files/atpss-gtfs.zip`, with calendars
+covering October–December 2026. The earlier unapproved HTTP Google redirect was
+not used. No insecure redirect or expired substitute is accepted. Unavailable
+data does not establish absence of services.
+See [feed verification](docs/REAL_FEED_VALIDATION.md) and
+[implementation status](docs/IMPLEMENTATION_STATUS.md) for measured results.
+
+## Start and stop
+
+Launch both services in hidden local processes:
+
+```powershell
+cd C:\Users\User\Desktop\TransportAtlas
+npm run build --prefix frontend
+.\scripts\start_local.ps1 -Production
+# http://127.0.0.1:5173/?date=2026-11-06
+# Offline map: http://127.0.0.1:5173/?date=2026-11-06&basemap=plain
+.\scripts\stop_local.ps1
+```
+
+The launcher checks ports, waits for HTTP readiness and saves owned process IDs in
+`data/local-services.json`. The stop script verifies ownership before stopping
+them. Logs are `data/backend.*.log` and `data/frontend.*.log`. Both services bind
+only to `127.0.0.1`. Omit `-Production` for the Vite development server with live
+source updates. Restart the backend after imports and rebuild production assets
+after frontend changes.
+
+Alternatively, use two terminals and stop each with **Ctrl+C**:
+
+```powershell
+# Terminal 1, repository root
+.\.venv\Scripts\python.exe -m transport_atlas serve
+# Terminal 2
+cd C:\Users\User\Desktop\TransportAtlas\frontend
+npm run dev
+```
+
+API health: `http://127.0.0.1:8000/api/v1/health`; API docs:
+`http://127.0.0.1:8000/docs`.
+
+## Explore
+
+- Display imported sources together, toggle operators or select one source.
+- Filter routes and stops by date and bus, rail, tram or ferry mode. Disable
+  “Operating on selected date only” to include inactive imported routes.
+- Search routes and stops, click lines/markers, zoom into stop clusters and use
+  **Fit** for the displayed network or focused variant.
+- Select directions and stop-sequence/shape variants. Click an exact departure
+  for ordered arrival/departure times and the trip's original geometry.
+- Inspect first/last departures, daily precise-trip counts, per-variant median
+  departure intervals at the first stop, calendars, exceptions and provenance.
+- **Street map** uses OpenFreeMap for geographic context; **Plain map** makes no
+  external tile requests. Online failures fall back to plain mode.
+
+**Dashed schematic links are not actual road/rail alignments.** Regional source
+shapes use adaptive display simplification within an explicit point budget; the
+current four-source regional overview uses a conservative 0.0017-degree bound.
+Selected-trip geometry retains the original points. The UI discloses limits and
+unavailable/expired data. Source
+coverage totals describe whole selected feeds; mode filters apply to the map and
+route list. Stops from different feeds are not automatically deduplicated.
+
+There are 389 imported route records, but 35 ARST and 4 ATP records have no trip
+references. Their geometry cannot be inferred from these feeds. All 350 routes
+with trips can be mapped without truncation; 349 operate on November 6. Missing
+trip data is not proof of absent real-world service.
+
+GTFS hours beyond 24:00 are preserved. Stop-local boards include preceding-day
+overnight services where applicable. `exact_times=0` frequencies remain windows,
+never invented precise departures; `exact_times=1` instances use template stop
+offsets. Variant template times are explicitly labeled until an exact instance is
+selected. Departure-list direction/variant filters apply to the displayed subset
+when its 200-record cap is reached; summary statistics cover the full route.
+
+## Verify locally
+
+```powershell
+.\scripts\verify_local.ps1
+# Cached-feed reconciliation: backend must be stopped.
+.\scripts\verify_local.ps1 -Feeds
+# Real-data browser smoke: both services must be running.
+.\scripts\verify_local.ps1 -Browser
+.\.venv\Scripts\python.exe scripts/profile_local.py
+```
+
+Individual checks:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q backend/tests
+.\.venv\Scripts\python.exe scripts/check_startup.py
+npm run build --prefix frontend
+.\.venv\Scripts\python.exe scripts/smoke_real_ui.py
+```
+
+Tests cover DuckDB, calendar exceptions, overnight/DST semantics, source isolation,
+unsafe ZIPs, atomic failure preservation, exact/non-exact frequencies, bulk-load
+fidelity/rollback and historical provenance. Startup testing uses an isolated
+temporary DuckDB and the actual Uvicorn launcher. Browser smoke uses real imported
+feeds and saves screenshots and timing evidence to `data/local-verification/`.
+The older `scripts/smoke_ui.py` expects the fictional fixture and an isolated demo DB.
+
+## Storage and remaining scope
+
+| Path | Purpose |
+|---|---|
+| `data/transport_atlas.duckdb` | Shared local database |
+| `data/downloads/` | Latest ZIPs and verified download sidecars |
+| `data/raw/<source>/<sha256>.zip` | Immutable feed archives and sidecars |
+| `data/local-verification/` | Count/calendar evidence, timings and screenshots |
+| `data/cache/network/` | Disposable, snapshot/filter-keyed serialized GeoJSON |
+| `.venv/`, `frontend/node_modules/`, `frontend/dist/` | Local environment/builds |
+
+These paths are ignored by Git. Only synthetic test ZIPs belong in the repository.
+Map responses are cached in memory and on disk; selection and filter changes use
+different keys. Invalid cache files are rebuilt. An uncached regional geometry
+request can still take tens of seconds; repeat requests and restarts reuse cached
+responses. Cache files can be removed while services are stopped to force rebuilding.
+The application uses bounded GeoJSON, not national vector tiles. External
+MobilityData validation, full pagination, historical selection UI, exports,
+physical-stop matching, connectivity/accessibility analysis and multi-country
+validation remain future milestones. See the [MVP specification](docs/MVP_SPEC.md).

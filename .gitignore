@@ -12,6 +12,8 @@ __pycache__/
 /frontend/node_modules/
 /frontend/dist/
 /frontend/.vite/
+/frontend/*.tsbuildinfo
+/ui-smoke-failure.png
 *.duckdb
 *.duckdb.wal
 *.sqlite

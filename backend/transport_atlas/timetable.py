@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date
 from .schedule import active_services, gtfs_instant
 from .storage import one, rows
+from .route_details import route_variants, route_evidence
+from statistics import median
 
 
 def route_timetable(con, snapshot_id: str, route_id: str, service_date: date, *, limit: int = 100) -> dict:
@@ -10,6 +12,7 @@ def route_timetable(con, snapshot_id: str, route_id: str, service_date: date, *,
     if route is None:
         raise KeyError('Unknown route')
     services = active_services(con, snapshot_id, service_date)
+    variants, trip_variants = route_variants(con, snapshot_id, route_id)
     trips = rows(con, '''SELECT t.trip_id,t.service_id,t.headsign,t.direction_id,
          a.timezone AS agency_timezone, fst.stop_id AS first_stop_id,
          fs.name AS first_stop_name, COALESCE(fst.departure_sec,fst.arrival_sec) AS first_sec,
@@ -50,6 +53,7 @@ def route_timetable(con, snapshot_id: str, route_id: str, service_date: date, *,
             else:
                 tz=t['agency_timezone']
                 windows.append({'trip_id':t['trip_id'],'direction_id':t['direction_id'],
+                    'variant_id':trip_variants[t['trip_id']],
                     'headsign':t['headsign'],'first_stop_name':t['first_stop_name'],
                     'start_local':gtfs_instant(service_date,f['start_sec'],tz).isoformat(),
                     'end_local':gtfs_instant(service_date,f['end_sec'],tz).isoformat(),
@@ -58,6 +62,8 @@ def route_timetable(con, snapshot_id: str, route_id: str, service_date: date, *,
             tz=t['agency_timezone']
             arrival = sec + (t['last_sec']-t['first_sec']) if t['last_sec'] is not None else None
             departures.append({'trip_id':t['trip_id'],'direction_id':t['direction_id'],
+               'variant_id':trip_variants[t['trip_id']], 'departure_seconds':sec,
+               'template_first_seconds':t['first_sec'], 'service_id':t['service_id'],
                'headsign':t['headsign'],'first_stop_id':t['first_stop_id'],
                'first_stop_name':t['first_stop_name'],'last_stop_name':t['last_stop_name'],
                'departure_local':gtfs_instant(service_date,sec,tz).isoformat(),
@@ -65,7 +71,18 @@ def route_timetable(con, snapshot_id: str, route_id: str, service_date: date, *,
                'precision':'scheduled'})
     departures.sort(key=lambda item:(item['departure_local'],item['trip_id']))
     windows.sort(key=lambda item:(item['start_local'],item['trip_id']))
+    for variant in variants:
+        precise = [d for d in departures if d['variant_id'] == variant['variant_id']]
+        seconds = [d['departure_seconds'] for d in precise]
+        variant.update(scheduled_departures=len(precise),
+                       first_departure=precise[0]['departure_local'] if precise else None,
+                       last_departure=precise[-1]['departure_local'] if precise else None,
+                       median_interval_minutes=median([b-a for a,b in zip(seconds, seconds[1:])])/60 if len(seconds)>1 else None,
+                       frequency_windows=sum(w['variant_id']==variant['variant_id'] for w in windows))
     return {'snapshot_id':snapshot_id,'route_id':route_id,'service_date':service_date.isoformat(),
+            'first_departure':departures[0]['departure_local'] if departures else None,
+            'last_departure':departures[-1]['departure_local'] if departures else None,
+            'variants':variants, **route_evidence(con, snapshot_id, route_id),
             'total_departures':len(departures),'departures':departures[:limit],
             'truncated':len(departures)>limit,'frequency_windows':windows[:limit],
             'windows_truncated':len(windows)>limit,

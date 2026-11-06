@@ -13,9 +13,11 @@ import hashlib
 from html.parser import HTMLParser
 import json
 import os
+import ssl
+import sys
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
-from urllib.request import Request, build_opener, HTTPRedirectHandler
+from urllib.request import Request, build_opener, HTTPRedirectHandler, HTTPSHandler
 import zipfile
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -112,7 +114,14 @@ class _OfficialRedirects(HTTPRedirectHandler):
 
 
 def _opener(allowed_hosts=None):
-    return build_opener(_OfficialRedirects(allowed_hosts))
+    # Windows' native chain builder retrieves missing intermediate certificates
+    # using the OS trust policy. Verification and hostname checks remain required.
+    if sys.platform == 'win32':
+        import truststore
+        context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    else:
+        context = ssl.create_default_context()
+    return build_opener(_OfficialRedirects(allowed_hosts), HTTPSHandler(context=context))
 
 
 def _get(url: str, *, timeout: int = 30, max_bytes: int = 3_000_000) -> tuple[bytes, str]:

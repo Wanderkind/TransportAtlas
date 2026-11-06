@@ -44,6 +44,17 @@ def test_atlas_preserves_overlapping_ids(loaded):
     assert len(uids)==4
     assert geo['metadata']['source_count']==2
 
+
+def test_adaptive_budget_continues_after_a_point_count_plateau(loaded):
+    c,sid,_=loaded
+    c.execute('DELETE FROM shapes WHERE snapshot_id=?',(sid,))
+    c.executemany('INSERT INTO shapes VALUES(?,?,?,?,?)',[
+        (sid,'SH1',i,40+(0.0003 if i%2 else 0),9+i*0.001) for i in range(21)])
+    geo=network_geometry(c,date(2026,11,6),max_points=8)
+    assert not geo['metadata']['truncated']
+    assert {f['properties']['route_id'] for f in geo['features']}=={'1','E','F'}
+    assert geo['metadata']['point_count']<=8
+
 def test_timetable_exact_vs_frequency_and_overnight(loaded):
     c,sid,_=loaded
     exact=route_timetable(c,sid,'E',date(2026,11,6))
