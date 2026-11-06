@@ -153,8 +153,10 @@ GTFS hours beyond 24:00 are preserved. Stop-local boards include preceding-day
 overnight services where applicable. `exact_times=0` frequencies remain windows,
 never invented precise departures; `exact_times=1` instances use template stop
 offsets. Variant template times are explicitly labeled until an exact instance is
-selected. Departure-list direction/variant filters apply to the displayed subset
-when its 200-record cap is reached; summary statistics cover the full route.
+selected. Route timetables are paged (200 departures per page, **Load more
+departures**). Direction and variant filters are applied by the server to the
+complete instant-ordered list before paging, so every filtered page is exact.
+Summary statistics always cover the full route.
 
 ## Verify locally
 
@@ -209,6 +211,6 @@ stored per immutable snapshot, so after the very first regional build (about a
 minute) a new date usually builds in a few seconds, even after a restart. Cache
 files can be removed while services are stopped to force rebuilding.
 The application uses bounded GeoJSON, not national vector tiles. External
-MobilityData validation, full pagination, historical selection UI, exports,
+MobilityData validation, stop-board pagination, historical selection UI, exports,
 physical-stop matching, connectivity/accessibility analysis and multi-country
 validation remain future milestones. See the [MVP specification](docs/MVP_SPEC.md).

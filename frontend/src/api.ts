@@ -12,7 +12,7 @@ export type TimetableTrip = {trip_id:string;variant_id:string;departure_seconds:
 export type TimetableWindow = {trip_id:string;variant_id:string;direction_id:number|null;headsign:string;first_stop_name:string;start_local:string;end_local:string;headway_seconds:number};
 export type Variant = {variant_id:string;direction_id:number|null;shape_id:string|null;representative_trip_id:string;headsign:string;stops:Array<{stop_id:string;name:string}>;scheduled_departures:number;first_departure:string|null;last_departure:string|null;median_interval_minutes:number|null;frequency_windows:number};
 export type Provenance = Snapshot & {publisher:string;landing_url:string;download_url:string|null;license_name:string|null};
-export type RouteTimetable = {total_departures:number;departures:TimetableTrip[];truncated:boolean;frequency_windows:TimetableWindow[];windows_truncated:boolean;note:string;first_departure:string|null;last_departure:string|null;variants:Variant[];provenance:Provenance;calendars:Array<Record<string,string|number>>;exceptions:Array<{service_id:string;service_date:string;exception_type:number}>;warnings:Array<{issue_code:string;count:number}>};
+export type RouteTimetable = {total_departures:number;matching_departures?:number;offset?:number;next_offset?:number|null;departures:TimetableTrip[];truncated:boolean;frequency_windows:TimetableWindow[];windows_truncated:boolean;note:string;first_departure:string|null;last_departure:string|null;variants:Variant[];provenance:Provenance;calendars:Array<Record<string,string|number>>;exceptions:Array<{service_id:string;service_date:string;exception_type:number}>;warnings:Array<{issue_code:string;count:number}>};
 export type TripDetail = {trip:{trip_id:string;shape_id:string|null};stops:Array<{stop_id:string;stop_sequence:number;name:string;arrival_sec:number|null;departure_sec:number|null;pickup_type:number;drop_off_type:number;timepoint:number|null;lat:number;lon:number}>;geometry:NetworkGeometry};
 
 export async function getJSON<T>(url:string, signal?:AbortSignal):Promise<T>{
@@ -29,5 +29,6 @@ export const endpoints={
  network:(d:string,m:string,s:string,active:boolean,sources?:string)=>`/api/v1/network/geometry?date=${q(d)}&mode=${q(m)}&active_only=${active}${s?`&source=${q(s)}`:''}${sources!==undefined?`&sources=${q(sources)}`:''}`,
  board:(s:Stop,d:string)=>`/api/v1/stop/${q(s.snapshot_id)}/${q(s.stop_id)}/departures?date=${q(d)}`,
  timetable:(r:Route,d:string)=>`/api/v1/route/${q(r.snapshot_id)}/${q(r.route_id)}/timetable?date=${q(d)}&limit=200`,
+ timetablePage:(r:Route,d:string,direction:string,variant:string,offset:number)=>`/api/v1/route/${q(r.snapshot_id)}/${q(r.route_id)}/timetable?date=${q(d)}&limit=200&offset=${offset}&direction=${q(direction)}&variant=${q(variant)}`,
  trip:(snapshot:string,trip:string)=>`/api/v1/trip/${q(snapshot)}/${q(trip)}`
 };

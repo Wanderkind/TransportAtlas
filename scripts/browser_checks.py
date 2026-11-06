@@ -28,6 +28,7 @@ INTERCEPT = r"""
   const rule=state.rules.find(r=>!r.disabled && u.pathname.includes(r.path) && (!r.date||u.searchParams.get('date')===r.date));
   const record={url:u.href,rule:rule?.id,started:performance.now(),delivered:false};state.requests.push(record);
   if(rule?.action==='error'){record.delivered=true;return new Response(JSON.stringify({detail:'Injected Phase 3 local failure'}),{status:503,headers:{'Content-Type':'application/json'}})}
+  if(rule?.action==='limit'){u.searchParams.set('limit',String(rule.limit));input=u.href}
   let response=await nativeFetch(input,rule?{...init,signal:undefined}:init);
   if(rule?.action==='hold'){
    record.ready=true;
@@ -100,8 +101,8 @@ def source(driver, value):
 def mode(driver, label):
     driver.find_element(By.XPATH, f"//div[contains(@class,'mode-tabs')]//button[normalize-space()='{label}']").click()
 
-def add_rule(driver, path, action, date=None):
-    return driver.execute_script('return window.__atlasTest.add(arguments[0])',{'path':path,'action':action,'date':date})
+def add_rule(driver, path, action, date=None, **extra):
+    return driver.execute_script('return window.__atlasTest.add(arguments[0])',{'path':path,'action':action,'date':date,**extra})
 
 def disable(driver, *ids):
     driver.execute_script('arguments[0].forEach(id=>window.__atlasTest.rules[id].disabled=true)',list(ids))

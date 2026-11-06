@@ -16,3 +16,6 @@
 @media(max-width:1200px){.workspace{grid-template-columns:245px minmax(350px,1fr) 270px}.map-container .legend{max-width:240px}}
 @media(max-width:1050px){.workspace{grid-template-columns:230px minmax(300px,1fr)}.inspector{display:flex;position:absolute;right:0;top:135px;bottom:30px;width:280px;z-index:3;box-shadow:-4px 0 22px #0002;transform:translateX(100%);transition:transform .2s}.inspector:has(.inspect-label){transform:translateX(0)}}
 @media(max-width:700px){.workspace{grid-template-columns:1fr}.inspector{display:none}.sidebar{display:none}.metrics{grid-template-columns:repeat(2,1fr)}.map-actions{right:8px;bottom:7px}.map-container .legend{bottom:50px}}
+
+.load-more{width:100%;margin:8px 0;padding:8px 10px;border:1px solid #c9d6de;border-radius:8px;background:#f5f9fb;color:#1d6489;font-weight:600;cursor:pointer}
+.load-more:disabled{opacity:.6;cursor:progress}

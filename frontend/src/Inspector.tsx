@@ -1,4 +1,5 @@
 import {useEffect, useLayoutEffect, useState} from 'react';
+import type {RouteTimetable as Timetable} from './api';
 import {endpoints, NetworkGeometry, Route, RouteTimetable, Snapshot, Stop, StopBoard, TimetableTrip, TripDetail} from './api';
 import {useKeyedRequest} from './useKeyedRequest';
 
@@ -25,8 +26,29 @@ export function Inspector({route,stop,date,timetable,board,timetableError,boardE
  useEffect(()=>{onDirection('all')},[onDirection]);
  useLayoutEffect(()=>{onGeometry(trip?.geometry??null)},[trip,onGeometry]);
  const variants=timetable?.variants.filter(v=>direction==='all'||String(v.direction_id)===direction)??[];
- const trips=timetable?.departures.filter(t=>(direction==='all'||String(t.direction_id)===direction)&&(variant==='all'||t.variant_id===variant))??[];
- const windows=timetable?.frequency_windows.filter(t=>(direction==='all'||String(t.direction_id)===direction)&&(variant==='all'||t.variant_id===variant))??[];
+ // Filtered views and later pages come from the server, which filters the
+ // complete instant-ordered list before paging; pages chain by next_offset.
+ const filtered=direction!=='all'||variant!=='all';
+ const pageKey=`${route?.snapshot_id}|${route?.route_id}|${date}|${direction}|${variant}`;
+ const [store,setStore]=useState<{key:string;pages:Record<number,Timetable>}>({key:'',pages:{}});
+ const [wanted,setWanted]=useState<{key:string;offset:number}|null>(null);
+ const pages=store.key===pageKey?store.pages:{};
+ const base=filtered?pages[0]:timetable??undefined;
+ const chain:Timetable[]=[];
+ for(let page=base;page;page=page.next_offset!=null?pages[page.next_offset]:undefined)chain.push(page);
+ const last=chain.at(-1);
+ const target=!timetable?null:filtered&&!pages[0]?0:wanted?.key===pageKey&&last?.next_offset===wanted.offset?wanted.offset:null;
+ const pageRequest=useKeyedRequest<Timetable>(route&&target!==null?endpoints.timetablePage(route,date,direction,variant,target):null,`${pageKey}|${target}`);
+ useEffect(()=>{
+   if(pageRequest.status==='ready'&&pageRequest.data&&target!==null){
+     const page=pageRequest.data;
+     setStore(s=>({key:pageKey,pages:{...(s.key===pageKey?s.pages:{}),[target]:page}}));
+   }
+ },[pageRequest.status,pageRequest.data,target,pageKey]);
+ const trips=chain.flatMap(p=>p.departures).filter(t=>(direction==='all'||String(t.direction_id)===direction)&&(variant==='all'||t.variant_id===variant));
+ const matching=last?.matching_departures??timetable?.total_departures??0;
+ const pageLoading=pageRequest.status==='loading';
+ const windows=(base??timetable)?.frequency_windows.filter(t=>(direction==='all'||String(t.direction_id)===direction)&&(variant==='all'||t.variant_id===variant))??[];
  const chosen=variants.find(v=>v.variant_id===variant);
  const offset=instance?instance.departure_seconds-instance.template_first_seconds:0;
  const snapshot=snapshots.find(s=>s.snapshot_id===(route?.snapshot_id??stop?.snapshot_id));
@@ -45,13 +67,16 @@ export function Inspector({route,stop,date,timetable,board,timetableError,boardE
     {chosen&&<p>{chosen.scheduled_departures} scheduled trips · {chosen.frequency_windows} non-exact windows.<br/>
       Median departure interval at this variant’s first stop: {chosen.median_interval_minutes===null?'unavailable':`${chosen.median_interval_minutes.toFixed(1)} min`}</p>}
     <div className="section-heading"><span>Exact departures — click for stops</span></div>
-    {timetable.truncated&&<p className="warning">Showing {timetable.departures.length} of {timetable.total_departures} departures. Direction/variant filters apply to this loaded subset; summary counts cover the full route.</p>}
+    {pageRequest.error&&<p role="alert">Departures unavailable: {pageRequest.error}</p>}
+    {filtered&&!base&&!pageRequest.error&&<p role="status">Loading matching departures…</p>}
+    {last?.truncated&&<p className="warning">Showing {trips.length} of {matching} matching departures. Summary counts cover the full route.</p>}
     <div className="departure-list">{trips.map((t,i)=><button type="button" className="departure" data-trip-id={t.trip_id} data-departure-seconds={t.departure_seconds} data-variant-id={t.variant_id} key={t.trip_id+i} onClick={()=>{setTripId(t.trip_id);setInstance(t)}}>
       <strong>{clock(t.departure_local)}</strong><span>{t.first_stop_name} → {t.last_stop_name}<small>{t.headsign} · direction {t.direction_id??'unspecified'}</small>
        <small>Arrives {clock(t.arrival_local)} · {t.departure_local.slice(0,10)}</small></span></button>)}</div>
+    {last?.truncated&&last.next_offset!=null&&<button type="button" className="load-more" disabled={pageLoading} onClick={()=>setWanted({key:pageKey,offset:last.next_offset!})}>{pageLoading?'Loading more departures…':'Load more departures'}</button>}
     {windows.length>0&&<><div className="section-heading"><span>Frequency windows — no exact times</span></div>{windows.map((w,i)=><p className="freq-window" key={i}>{clock(w.start_local)}–{clock(w.end_local)} · every {w.headway_seconds/60} min · {w.headsign}</p>)}</>}
     {timetable.windows_truncated&&<p className="warning">Frequency window results are truncated.</p>}
-    {!trips.length&&!windows.length&&<p>No matching departures in the loaded results.</p>}
+    {base&&!trips.length&&!windows.length&&<p>No matching departures on this date.</p>}
     <details><summary>Operating calendars and exceptions</summary>{timetable.calendars.map(c=><p key={String(c.service_id)}>{c.service_id}: {c.start_date}–{c.end_date}<br/>{['monday','tuesday','wednesday','thursday','friday','saturday','sunday'].filter(d=>c[d]===1).join(', ')||'No recurring weekdays'}</p>)}
      {timetable.exceptions.map((e,i)=><p key={i}>{e.service_date} · {e.service_id} · {e.exception_type===1?'added':'removed'}</p>)}</details>
     {!!timetable.warnings.length&&<details><summary>Feed warnings</summary>{timetable.warnings.map(w=><p key={w.issue_code}>{w.issue_code}: {w.count}</p>)}</details>}

@@ -64,7 +64,8 @@ def main():
             until(driver,lambda d:(s if (s:=inspect(d))['focused']['featureCount']>0 and s['focused']['sourceLoaded'] else False),'variant focused geometry')
             departure=next(t for t in timetable['departures'] if t['variant_id']==v['variant_id'] and str(t['direction_id'] if t['direction_id'] is not None else 'null')==direction)
             trip=api(f"trip/{r['snapshot_id']}/{departure['trip_id']}")
-            driver.find_element(By.CSS_SELECTOR,'.inspector button.departure').click()
+            # Filtered departures are fetched from the server after the selection.
+            until(driver,lambda d:[e for e in d.find_elements(By.CSS_SELECTOR,'.inspector button.departure') if e.get_attribute('data-variant-id')==v['variant_id']],'server-filtered variant departures')[0].click()
             until(driver,lambda d:len(d.find_elements(By.CSS_SELECTOR,'.trip-stop'))==len(trip['stops']),'exact ordered trip stops')
             offset=departure['departure_seconds']-departure['template_first_seconds']
             rows=driver.find_elements(By.CSS_SELECTOR,'.trip-stop')
@@ -89,6 +90,30 @@ def main():
         report['checks'].append('each operator: real source counts, direction, variant, exact ordered times, original geometry, provenance, stop board')
         # Operator checkbox must remove both source data and actual rendered features.
         source(driver,'');ready(driver,'2026-11-06',SOURCES)
+        # Pagination: real routes peak below one 200-row page, so the request page
+        # size is rewritten to 50 in the browser; the real server pages the data.
+        size=50
+        busiest=max((r for r in routes if r['active_on_date'] and r['source_id']=='arst'),key=lambda r:api(f"route/{r['snapshot_id']}/{r['route_id']}/timetable?date=2026-11-06&limit=1")['total_departures'])
+        pages=[api(f"route/{busiest['snapshot_id']}/{busiest['route_id']}/timetable?date=2026-11-06&limit={size}&offset={o}") for o in (0,size)]
+        total=pages[0]['total_departures'];assert total>size,total
+        paging=add_rule(driver,'/timetable','limit','2026-11-06',limit=size)
+        uid=f"{busiest['snapshot_id']}:{busiest['route_id']}"
+        driver.execute_script('arguments[0].click()',until(driver,lambda d:next((e for e in d.find_elements(By.CSS_SELECTOR,'.route-item') if e.get_attribute('data-route-uid')==uid),None),'busiest route'))
+        until(driver,lambda d:len(d.find_elements(By.CSS_SELECTOR,'.inspector button.departure'))==size,'first timetable page')
+        assert f'Showing {size} of {total} matching departures' in driver.find_element(By.CSS_SELECTOR,'.inspector').text
+        driver.find_element(By.CSS_SELECTOR,'.inspector button.load-more').click()
+        expected=[(t['trip_id'],str(t['departure_seconds'])) for p in pages for t in p['departures']]
+        until(driver,lambda d:len(d.find_elements(By.CSS_SELECTOR,'.inspector button.departure'))==len(expected),'second timetable page appended')
+        shown=[(e.get_attribute('data-trip-id'),e.get_attribute('data-departure-seconds')) for e in driver.find_elements(By.CSS_SELECTOR,'.inspector button.departure')]
+        assert shown==expected,(shown[:5],expected[:5])
+        # A direction filter is applied by the server to the complete list.
+        direction=str(pages[0]['departures'][0]['direction_id'])
+        Select(driver.find_element(By.CSS_SELECTOR,'select[aria-label="Direction"]')).select_by_value(direction)
+        filtered=api(f"route/{busiest['snapshot_id']}/{busiest['route_id']}/timetable?date=2026-11-06&limit={size}&direction={direction}")
+        until(driver,lambda d:[e.get_attribute('data-trip-id') for e in d.find_elements(By.CSS_SELECTOR,'.inspector button.departure')]==[t['trip_id'] for t in filtered['departures']],'server-filtered direction page')
+        disable(driver,paging)
+        report['pagination']={'route_uid':uid,'total_departures':total,'page_size':size,'shown_after_load_more':len(shown),'direction':direction,'direction_matching':filtered['matching_departures']}
+        report['checks'].append('timetable pages append in exact server order; direction filter applied server-side')
         route_search=driver.find_element(By.CSS_SELECTOR,'input[aria-label="Search routes"]')
         route_search.send_keys('atp_sassari')
         until(driver,lambda d:len(d.find_elements(By.CSS_SELECTOR,'.route-item'))==46 and all('atp_sassari' in e.text for e in d.find_elements(By.CSS_SELECTOR,'.route-item')),'route search scoped to ATP')
@@ -118,7 +143,7 @@ def main():
         until(driver,lambda d:'Injected incomplete geometry' in d.find_element(By.TAG_NAME,'body').text,'incomplete geometry warning')
         # ready() covers map sources only; the date's route catalog loads independently.
         until(driver,lambda d:d.find_elements(By.CSS_SELECTOR,'.route-item'),'route catalog for warning date')[0].click()
-        until(driver,lambda d:'Direction/variant filters apply to this loaded subset' in d.find_element(By.CSS_SELECTOR,'.inspector').text,'timetable truncation warning')
+        until(driver,lambda d:'matching departures. Summary counts cover the full route' in d.find_element(By.CSS_SELECTOR,'.inspector').text,'timetable truncation warning')
         report['warning_screenshot']=screenshot(driver,'incomplete-and-truncated-warning')
         disable(driver,warning,twarning)
         resources=driver.execute_script("return performance.getEntriesByType('resource').map(r=>({url:r.name,duration_ms:Math.round(r.duration),bytes:r.transferSize}))")

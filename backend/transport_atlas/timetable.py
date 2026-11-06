@@ -7,7 +7,25 @@ from .route_details import route_variants, route_evidence
 from statistics import median
 
 
-def route_timetable(con, snapshot_id: str, route_id: str, service_date: date, *, limit: int = 100) -> dict:
+def _matches(item, direction, variant):
+    if direction is not None and direction != 'all':
+        value = 'null' if item['direction_id'] is None else str(item['direction_id'])
+        if value != direction:
+            return False
+    return variant is None or variant == 'all' or item['variant_id'] == variant
+
+
+def route_timetable(con, snapshot_id: str, route_id: str, service_date: date, *, limit: int = 100,
+                    offset: int = 0, direction: str | None = None, variant: str | None = None) -> dict:
+    """Departures for one service date, optionally filtered and paged.
+
+    Direction (``'0'``, ``'1'``, ``'null'`` or ``'all'``) and variant filters are
+    applied to the complete, instant-ordered list before ``offset``/``limit``,
+    so each page of a filtered view is exact. Route summaries and variant
+    statistics always describe the whole route. Frequency windows are returned
+    on the first page only.
+    """
+    wanted_direction, wanted_variant = direction or 'all', variant or 'all'
     route = one(con, 'SELECT * FROM routes WHERE snapshot_id=? AND route_id=?', (snapshot_id,route_id))
     if route is None:
         raise KeyError('Unknown route')
@@ -79,11 +97,17 @@ def route_timetable(con, snapshot_id: str, route_id: str, service_date: date, *,
                        last_departure=precise[-1]['departure_local'] if precise else None,
                        median_interval_minutes=median([b-a for a,b in zip(seconds, seconds[1:])])/60 if len(seconds)>1 else None,
                        frequency_windows=sum(w['variant_id']==variant['variant_id'] for w in windows))
+    matching = [d for d in departures if _matches(d, wanted_direction, wanted_variant)]
+    matching_windows = [w for w in windows if _matches(w, wanted_direction, wanted_variant)]
+    end = offset+limit
     return {'snapshot_id':snapshot_id,'route_id':route_id,'service_date':service_date.isoformat(),
             'first_departure':departures[0]['departure_local'] if departures else None,
             'last_departure':departures[-1]['departure_local'] if departures else None,
             'variants':variants, **route_evidence(con, snapshot_id, route_id),
-            'total_departures':len(departures),'departures':departures[:limit],
-            'truncated':len(departures)>limit,'frequency_windows':windows[:limit],
-            'windows_truncated':len(windows)>limit,
+            'total_departures':len(departures),'matching_departures':len(matching),
+            'filters':{'direction':wanted_direction,'variant':wanted_variant},
+            'offset':offset,'limit':limit,'departures':matching[offset:end],
+            'truncated':len(matching)>end,'next_offset':end if len(matching)>end else None,
+            'frequency_windows':matching_windows[:limit] if offset == 0 else [],
+            'windows_truncated':len(matching_windows)>limit,
             'note':'Only precise scheduled times appear as departures. Non-exact headways remain windows.'}

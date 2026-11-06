@@ -117,6 +117,23 @@ all-four readiness and cached date changes in these runs. It is **not** met
 for the very first regional build on an empty shape store (about a minute,
 once). A single headless sample is not a robust percentile.
 
+## November 7 (overnight) — timetable pagination
+
+`GET /api/v1/route/{snapshot}/{route}/timetable` accepts `offset` (≥ 0) and
+`direction` (`0`, `1`, `null`, `all`) and `variant`. Filters apply to the complete
+instant-ordered list before paging. Responses add `matching_departures`,
+`offset`, `limit`, `next_offset` and `filters`. `total_departures` and the
+variant statistics remain whole-route. Frequency windows appear on the first
+page only. The inspector fetches filtered pages from the server and appends
+pages with **Load more departures**. This removes the earlier "filters apply to
+the loaded subset" limitation. Tests: `test_phase3_pagination.py` (pages
+partition the full ordering; filters apply before paging; API validation).
+Browser: real routes peak at 175 departures on Nov 6 (below one 200-row page),
+so the smoke test rewrites the request page size to 50 in the browser. Against
+the real server, ARST MCA1 (175 departures) showed 100 after one Load more,
+identical to API pages 0 and 50, and a direction-0 filter (87 matching)
+matched the server-filtered page.
+
 ---
 
 ## Historical record: paused checkpoint (November 6–7)

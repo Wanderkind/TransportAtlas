@@ -189,9 +189,12 @@ def create_app(db_path: str | Path | None = None,backend: str | None = None):
     @app.get('/api/v1/route/{snapshot_id}/{route_id}/timetable')
     def route_schedule(snapshot_id: str, route_id: str,
                        date_value: date = Query(alias='date'),
-                       limit: int = Query(default=100, ge=1, le=500)):
+                       limit: int = Query(default=100, ge=1, le=500),
+                       offset: int = Query(default=0, ge=0),
+                       direction: str = 'all', variant: str = 'all'):
         try:
-            return route_timetable(app.state.con, snapshot_id, route_id, date_value, limit=limit)
+            return route_timetable(app.state.con, snapshot_id, route_id, date_value, limit=limit,
+                                   offset=offset, direction=direction, variant=variant)
         except KeyError:
             raise HTTPException(status_code=404, detail='Route not found')
 
