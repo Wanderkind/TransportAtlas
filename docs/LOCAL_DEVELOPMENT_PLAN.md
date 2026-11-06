@@ -56,3 +56,41 @@ under ignored data paths. No import should repeat needlessly.
   the original ZIPs, preserved, and documented instead of inventing alignments.
 - Publish the verified development commit with CI skipped; preserve the checkout,
   downloaded feeds, database, generated evidence and unrelated empty review patch.
+
+## Phase 3 corrective stabilization (current instructions)
+
+Checkpoint update, November 7: the user subsequently authorized a commit and push
+of the unfinished development branch. `PHASE3_HANDOFF.md` contains the resume
+checklist. Earlier local-only/uncommitted wording below records the pause and
+does not override this later authorization. No main merge, PR or remote CI.
+
+**Paused at user request on 2026-11-07 near the usage limit.** Phase 3 remains
+uncommitted. Independent audit: 317 checks passed; backend: 74 tests passed;
+latest TypeScript/Vite build passed. Final browser verification is blocked by a
+MapLibre undefined paint-buffer exception. A deferred source-event update is the
+current unverified trial. Resume details, evidence and commands are recorded in
+`CORRECTIVE_REVIEW_20261106.md`. Finish browser/performance checks and review before
+creating the local commit. Do not push. Local services are stopped for this pause.
+
+Base: `32abd1509182e8b998f94494a6f9d5cc458a0372`. The attached Phase 3 request
+supersedes the earlier publishing instruction: **local commits only; no push,
+PR, main merge or GitHub Actions**. Preserve the existing checkout and evidence.
+
+- [ ] Reproduce asynchronous date/mode/source races; bind every displayed dataset
+  and inspector to its exact request identity, clear stale map sources immediately,
+  and test delayed, aborted, failed and out-of-order responses in the browser.
+- [ ] Reconcile source/mode route records, trip-referenced, active, eligible,
+  rendered, no-trip, insufficient-geometry and display-limit categories with
+  precise denominators. Add synthetic regressions and visible coverage indicators.
+- [ ] Strengthen browser checks using actual MapLibre sources/features and all
+  four sources, including variants, exact trips, offline mode and error states.
+- [ ] Independently audit raw ZIPs, hashes, provenance and DuckDB SQL for all four
+  dates, without downloading or reimporting. Audit timetable edge cases separately.
+- [ ] Profile cold/cached backend, stop queries and browser/source transitions;
+  apply only measured incremental improvements and retain all supported geometry.
+- [ ] Run the complete local workflow, review the final diff, write
+  `docs/CORRECTIVE_REVIEW_20261106.md`, and commit locally.
+
+Root owns network/API/UI/browser changes. Independent agents own the evidence
+audit script and timetable regressions; they do not alter the production database
+or manage running services. New evidence belongs under `data/local-verification/phase3/`.

@@ -10,6 +10,12 @@ from collections import defaultdict
 
 from .storage import rows
 from .schedule import active_services, active_snapshots
+from .provenance import declared_bounds
+
+COVERAGE_KEYS = ('total_route_records','routes_with_trip_references','active_routes',
+                 'eligible_routes','rendered_routes','routes_without_trip_references',
+                 'routes_with_insufficient_geometry','routes_omitted_by_limits',
+                 'inactive_routes_excluded','partially_rendered_routes')
 
 MODE_TYPES = {
     'all': None,
@@ -91,7 +97,6 @@ def network_geometry(con, service_day: date, *, source_id: str | None = None,
     if mode not in MODE_TYPES:
         raise ValueError(f'Unknown mode: {mode}')
     features: list[dict] = []
-    selected_routes = 0
     remaining_routes = max_routes
     used_points = 0
     original_points = 0
@@ -99,7 +104,6 @@ def network_geometry(con, service_day: date, *, source_id: str | None = None,
     source_count = 0
     missing_geometries = 0
     snap_details = []
-    selected_keys = set()
     for snapshot in active_snapshots(con):
         if source_id and snapshot['source_id'] != source_id:
             continue
@@ -107,33 +111,49 @@ def network_geometry(con, service_day: date, *, source_id: str | None = None,
             continue
         source_count += 1
         sid = snapshot['snapshot_id']
-        services = active_services(con, sid, service_day) if active_only else None
-        feed_covered = snapshot['feed_start'] <= service_day.isoformat() <= snapshot['feed_end']
+        day_services = active_services(con, sid, service_day)
+        services = day_services if active_only else None
+        declared_start, declared_end = declared_bounds(snapshot)
+        feed_covered = (snapshot['feed_start'] <= service_day.isoformat() <= snapshot['feed_end']
+                        and (not declared_start or service_day.isoformat()>=declared_start)
+                        and (not declared_end or service_day.isoformat()<=declared_end))
         candidates = rows(con, 'SELECT route_id, route_type FROM routes WHERE snapshot_id=? ORDER BY route_id', (sid,))
         matched = [r for r in candidates if MODE_TYPES[mode] is None or r['route_type'] in MODE_TYPES[mode]]
-        if not matched:
-            snap_details.append(dict(source_id=snapshot['source_id'], feed_covered=feed_covered, routes=0))
-            continue
-
         trips = rows(con, 'SELECT trip_id,route_id,service_id,shape_id,direction_id FROM trips WHERE snapshot_id=? ORDER BY trip_id', (sid,))
         matched_ids = {r['route_id'] for r in matched}
+        referenced = {t['route_id'] for t in trips} & matched_ids
+        active = {t['route_id'] for t in trips if t['service_id'] in day_services} & matched_ids
+        coverage = dict.fromkeys(COVERAGE_KEYS,0)
+        coverage.update(total_route_records=len(matched), routes_with_trip_references=len(referenced),
+                        active_routes=len(active),routes_without_trip_references=len(matched_ids-referenced),
+                        inactive_routes_excluded=len(referenced-active) if active_only else 0)
+        detail = dict(source_id=snapshot['source_id'],snapshot_id=sid,feed_covered=feed_covered,routes=0,coverage=coverage)
+        snap_details.append(detail)
         selected_trips = [t for t in trips if t['route_id'] in matched_ids and
                           (services is None or t['service_id'] in services)]
         trips_by_route: dict[str, list[dict]] = defaultdict(list)
         for trip in selected_trips:
             trips_by_route[trip['route_id']].append(trip)
         eligible = [r for r in matched if trips_by_route.get(r['route_id'])]
+        coverage['eligible_routes'] = len(eligible)
+        # Determine data adequacy BEFORE caps, without fetching all vertices.
+        good_shape_ids = {r['shape_id'] for r in rows(con, '''SELECT shape_id FROM shapes
+            WHERE snapshot_id=? GROUP BY shape_id HAVING COUNT(*)>=2''',(sid,))} if eligible else set()
+        good_stop_trips = {r['trip_id'] for r in rows(con, '''SELECT st.trip_id FROM stop_times st
+            JOIN stops s ON s.snapshot_id=st.snapshot_id AND s.stop_id=st.stop_id
+            WHERE st.snapshot_id=? AND s.lat IS NOT NULL AND s.lon IS NOT NULL
+            GROUP BY st.trip_id HAVING COUNT(*)>=2''',(sid,))} if eligible else set()
+        drawable = {t['route_id'] for t in selected_trips if t['shape_id'] in good_shape_ids or t['trip_id'] in good_stop_trips}
+        coverage['routes_with_insufficient_geometry'] = len(eligible)-len(drawable)
+        eligible = [r for r in eligible if r['route_id'] in drawable]
         if len(eligible) > remaining_routes:
             truncated = True
             eligible = eligible[:max(0, remaining_routes)]
-        selected_routes += len(eligible)
         remaining_routes -= len(eligible)
-        snap_details.append(dict(source_id=snapshot['source_id'], feed_covered=feed_covered, routes=len(eligible)))
         if not eligible:
             continue
 
         by_route = {r['route_id']: r for r in eligible}
-        selected_keys.update((sid, rid) for rid in by_route)
         shapes_needed = sorted({t['shape_id'] for r in eligible for t in trips_by_route[r['route_id']] if t['shape_id']})
         shape_points: dict[str, list[list[float]]] = defaultdict(list)
         missing_shapes = []
@@ -218,6 +238,9 @@ def network_geometry(con, service_day: date, *, source_id: str | None = None,
     # Allocate the display budget across ALL sources, rather than allowing the
     # first operator to consume it before later operators get any alignments.
     originals = [f['geometry']['coordinates'] for f in features]
+    before_limits = defaultdict(int)
+    for f in features:
+        before_limits[(f['properties']['snapshot_id'],f['properties']['route_id'])] += 1
     tolerance = 0.0001
     minimum_points = sum(2 if f['properties']['quality']=='source-shape' else len(f['geometry']['coordinates']) for f in features)
     while used_points > max_points and tolerance < 0.05:
@@ -246,20 +269,41 @@ def network_geometry(con, service_day: date, *, source_id: str | None = None,
                 features.append(feature)
                 used_points += count
     drawn_keys = {(f['properties']['snapshot_id'],f['properties']['route_id']) for f in features}
-    missing_geometries = len(selected_keys - drawn_keys)
+    after_limits = defaultdict(int)
+    for f in features:
+        after_limits[(f['properties']['snapshot_id'],f['properties']['route_id'])] += 1
+    for detail in snap_details:
+        sid=detail['snapshot_id']
+        c=detail['coverage']
+        c['rendered_routes']=sum(key[0]==sid for key in drawn_keys)
+        c['routes_omitted_by_limits']=c['eligible_routes']-c['routes_with_insufficient_geometry']-c['rendered_routes']
+        c['partially_rendered_routes']=sum(key[0]==sid and after_limits[key]<before_limits[key] for key in drawn_keys)
+        detail['routes']=c['rendered_routes']
+    coverage={key:sum(s['coverage'][key] for s in snap_details) for key in COVERAGE_KEYS}
+    missing_geometries=coverage['routes_without_trip_references']+coverage['routes_with_insufficient_geometry']
+    warnings=[]
+    if coverage['routes_without_trip_references']:
+        warnings.append(f"{coverage['routes_without_trip_references']} imported route records have no trip references; no alignment is inferred. This does not establish absence of service.")
+    if coverage['routes_with_insufficient_geometry']:
+        warnings.append(f"{coverage['routes_with_insufficient_geometry']} eligible routes lack sufficient shape/stop coordinates.")
+    if truncated:
+        warnings.append('Display limit reached; routes or variants are omitted. Narrow the filters.')
 
     return {'type': 'FeatureCollection', 'features': features,
             'metadata': {'service_date': service_day.isoformat(), 'active_only': active_only,
                          'mode': mode, 'source_filter': source_id, 'source_count': source_count,
-                         'route_count': selected_routes, 'feature_count': len(features),
+                         'route_count': coverage['rendered_routes'], 'feature_count': len(features),
+                         'coverage':coverage,
+                         'coverage_definition': 'T=N+inactive_excluded+eligible; eligible=rendered+insufficient+limit_omitted. In active-only mode eligible=active; otherwise eligible=trip_referenced. Partially rendered is a subset of rendered.',
+                         'filters':{'date':service_day.isoformat(),'mode':mode,'source':source_id,
+                                    'sources':sorted(source_ids) if source_ids is not None else None,'active_only':active_only},
                          'point_count': used_points, 'max_routes': max_routes,
                          'original_shape_points': original_points,
                          'simplification_tolerance_degrees': tolerance + (0.0001 if tolerance>0.0001 else 0),
                          'max_points': max_points, 'truncated': truncated,
                          'missing_geometry_routes': missing_geometries,
                          'snapshots': snap_details,
-                         'warning': ('Geometry limit reached; network incomplete. Narrow the filters.'
-                                     if truncated else None)}}
+                         'warning': ' '.join(warnings) if warnings else None}}
 
 
 def _feature(snapshot_id, source_id, route_id, route_type, mode, coordinates, quality, shape_id):

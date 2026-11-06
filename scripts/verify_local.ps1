@@ -15,14 +15,17 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'TypeScript/Vite build failed' }
     } finally { Pop-Location }
     if ($Feeds) {
-        # No network or repeated imports: verify current cached feeds and DB.
-        # Backend must be stopped before this optional writable check.
-        & $python scripts/import_local_feeds.py --offline --sources aspo,trenitalia_sardegna,arst,atp_sassari --report feeds-recheck.json
+        # Independent raw ZIP/SQL audit: no network, imports or database writes.
+        # Stop the backend first because DuckDB locks across processes.
+        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+        & $python scripts/audit_local_evidence.py --output "data/local-verification/phase3/independent-audit-$stamp.json"
         if ($LASTEXITCODE -ne 0) { throw 'Feed verification failed' }
     }
     if ($Browser) {
         # Start backend and frontend in separate terminals first.
         & $python scripts/smoke_real_ui.py
         if ($LASTEXITCODE -ne 0) { throw 'Real-data browser smoke failed' }
+        & $python scripts/smoke_filter_races.py
+        if ($LASTEXITCODE -ne 0) { throw 'Delayed/error/filter-race browser checks failed' }
     }
 } finally { Pop-Location }

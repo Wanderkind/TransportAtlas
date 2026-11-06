@@ -1,10 +1,52 @@
-# Implementation status — Windows local development, 2026-11-06
+# Implementation status — Windows local development, 2026-11-07
+
+## Current: Phase 3 corrective stabilization
+
+Checkpoint update, November 7: the user authorized committing and pushing the
+unfinished work to the development branch. See [handoff](PHASE3_HANDOFF.md).
+The local-only/uncommitted statements below record the earlier pause. Rendering
+verification remains incomplete; no main merge or GitHub Actions is authorized.
+
+The [corrective review](CORRECTIVE_REVIEW_20261106.md) supersedes the historical
+Phase 2 results below. Work remains on `codex/local-real-feed-atlas`, based on
+`32abd1509182e8b998f94494a6f9d5cc458a0372`; **local commits only, no push, PR,
+main merge, deployment or GitHub Actions**.
+
+**Paused by user request; browser verification and the local commit remain.**
+The stale-map race was reproduced with held responses and addressed using exact
+request identities, cancellation/completion guards and immediate map-layer hiding.
+Stops, search, route/stop inspectors and selected-trip geometry follow the same
+filter context. Coverage now exposes reconciled source/mode denominators and
+separate no-trip, inactive, insufficient-geometry and limit categories.
+
+An independent streaming raw-ZIP/read-only DuckDB audit passed 317 checks. It
+confirmed all four sources, hashes, source isolation, calendars and Nov 6–9 counts,
+without downloading or reimporting. Recorded ATP HTTPS provenance and archive
+integrity are consistent; the original network retrieval cannot be re-observed.
+Timetable regressions cover DST instant ordering and long downstream frequency
+offsets. The complete backend suite has 74 passing tests.
+
+Performance fixes allow cached geometry to bypass an unrelated uncached build,
+reuse successful frontend requests, and avoid repeated stop GeoJSON conversions.
+The first new-format uncached regional build still took 80.69 seconds. This is a
+remaining limitation, not a claim that the five-second browser target is met.
+See the corrective report for final browser results and measured comparisons.
+The strengthened browser run exposed a MapLibre undefined paint-buffer exception.
+A deferred source-readiness update builds but awaits browser confirmation. This
+checkpoint is not ready for integration.
+
+`verify_local.ps1 -Feeds` now performs the independent read-only audit instead of
+running an importer. Stop the backend before that audit. `-Browser` runs both the
+all-source smoke and delayed/error/filter-race checks. Service launch logs are
+unique per run under `data/local-verification/phase3/services/`.
+
+## Historical Phase 2 record
 
 Development branch: `codex/local-real-feed-atlas`, based on main
 `8c065b390f97667d63d3300d1eab171ad0aadd6e`. All imports, builds, API checks and
 browser tests run locally. No GitHub Actions or public deployment are needed.
-The user subsequently authorized committing the finished work to GitHub; publish
-only this development branch, with CI skipped, without merging main or opening a PR.
+Phase 2 was published with user authorization. That authorization does not apply
+to Phase 3, which must remain local.
 
 ## Real feeds verified locally
 

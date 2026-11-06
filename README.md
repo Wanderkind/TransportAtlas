@@ -48,9 +48,10 @@ saved to `data/local-verification/feeds.json`.
 Recheck cached data without network access or replacing the original timing report:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts/import_local_feeds.py --offline --sources aspo,trenitalia_sardegna,arst,atp_sassari --report feeds-recheck.json
+.\.venv\Scripts\python.exe scripts/audit_local_evidence.py --output data/local-verification/phase3/manual-audit.json
 ```
 
+The audit reads raw CSV tables and opens DuckDB read-only; stop the backend first.
 Unchanged imports do not reinsert data. To intentionally retrieve a newer feed,
 use the official CLI; earlier content-addressed archives remain available:
 
@@ -109,6 +110,14 @@ API health: `http://127.0.0.1:8000/api/v1/health`; API docs:
 
 ## Explore
 
+The [unfinished-work handoff](docs/PHASE3_HANDOFF.md) lists the rendering blocker,
+resume commands and remaining checks. The user authorized publishing this
+checkpoint on the development branch; it is not ready for integration.
+The [Phase 3 corrective review](docs/CORRECTIVE_REVIEW_20261106.md) records the
+current independent audit, browser regressions and performance limits. This phase
+was initially local-only. The later checkpoint push authorization does not
+authorize GitHub Actions or a main merge.
+
 - Display imported sources together, toggle operators or select one source.
 - Filter routes and stops by date and bus, rail, tram or ferry mode. Disable
   “Operating on selected date only” to include inactive imported routes.
@@ -134,6 +143,12 @@ references. Their geometry cannot be inferred from these feeds. All 350 routes
 with trips can be mapped without truncation; 349 operate on November 6. Missing
 trip data is not proof of absent real-world service.
 
+The coverage panel reconciles the selected source/mode scope: records = no trips
++ inactive excluded + eligible; eligible = drawn + insufficient geometry + omitted
+by limits. Partial routes are a subset of drawn routes. Date/mode/operator changes
+hide previous geometry, stops and inspectors immediately; loading and errors refer
+to the current filters. Successful results are cached by their exact filter identity.
+
 GTFS hours beyond 24:00 are preserved. Stop-local boards include preceding-day
 overnight services where applicable. `exact_times=0` frequencies remain windows,
 never invented precise departures; `exact_times=1` instances use template stop
@@ -145,7 +160,7 @@ when its 200-record cap is reached; summary statistics cover the full route.
 
 ```powershell
 .\scripts\verify_local.ps1
-# Cached-feed reconciliation: backend must be stopped.
+# Independent raw ZIP/read-only SQL audit: backend must be stopped.
 .\scripts\verify_local.ps1 -Feeds
 # Real-data browser smoke: both services must be running.
 .\scripts\verify_local.ps1 -Browser
@@ -159,6 +174,7 @@ Individual checks:
 .\.venv\Scripts\python.exe scripts/check_startup.py
 npm run build --prefix frontend
 .\.venv\Scripts\python.exe scripts/smoke_real_ui.py
+.\.venv\Scripts\python.exe scripts/smoke_filter_races.py
 ```
 
 Tests cover DuckDB, calendar exceptions, overnight/DST semantics, source isolation,
@@ -166,6 +182,11 @@ unsafe ZIPs, atomic failure preservation, exact/non-exact frequencies, bulk-load
 fidelity/rollback and historical provenance. Startup testing uses an isolated
 temporary DuckDB and the actual Uvicorn launcher. Browser smoke uses real imported
 feeds and saves screenshots and timing evidence to `data/local-verification/`.
+Phase 3 evidence lives in its `phase3/` subdirectory. Browser tests inspect actual
+MapLibre sources and rendered features, block HTTPS in plain-map mode, and inject
+delayed, out-of-order and failed responses. Add `&diagnostics=1` to a dashboard URL
+to enable read-only map diagnostics used by these tests. Selenium and a working
+local Chrome installation are required; no remote browser service is used.
 The older `scripts/smoke_ui.py` expects the fictional fixture and an isolated demo DB.
 
 ## Storage and remaining scope
@@ -176,6 +197,7 @@ The older `scripts/smoke_ui.py` expects the fictional fixture and an isolated de
 | `data/downloads/` | Latest ZIPs and verified download sidecars |
 | `data/raw/<source>/<sha256>.zip` | Immutable feed archives and sidecars |
 | `data/local-verification/` | Count/calendar evidence, timings and screenshots |
+| `data/local-verification/phase3/services/<run>/` | Unique backend/frontend launch logs |
 | `data/cache/network/` | Disposable, snapshot/filter-keyed serialized GeoJSON |
 | `.venv/`, `frontend/node_modules/`, `frontend/dist/` | Local environment/builds |
 

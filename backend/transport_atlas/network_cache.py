@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from uuid import uuid4
 
-FORMAT_VERSION = 'regional-adaptive-v2'
+FORMAT_VERSION = 'regional-coverage-v3'
 
 
 def cache_key(selection, day, mode, source, sources, active_only, max_routes, max_points):

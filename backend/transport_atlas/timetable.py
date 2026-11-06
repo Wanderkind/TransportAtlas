@@ -1,6 +1,6 @@
 """Route timetable for a GTFS *service date* (not a wall-clock departure board)."""
 from __future__ import annotations
-from datetime import date
+from datetime import date, datetime
 from .schedule import active_services, gtfs_instant
 from .storage import one, rows
 from .route_details import route_variants, route_evidence
@@ -69,8 +69,8 @@ def route_timetable(con, snapshot_id: str, route_id: str, service_date: date, *,
                'departure_local':gtfs_instant(service_date,sec,tz).isoformat(),
                'arrival_local':gtfs_instant(service_date,arrival,tz).isoformat() if arrival is not None else None,
                'precision':'scheduled'})
-    departures.sort(key=lambda item:(item['departure_local'],item['trip_id']))
-    windows.sort(key=lambda item:(item['start_local'],item['trip_id']))
+    departures.sort(key=lambda item:(datetime.fromisoformat(item['departure_local']).timestamp(),item['trip_id']))
+    windows.sort(key=lambda item:(datetime.fromisoformat(item['start_local']).timestamp(),item['trip_id']))
     for variant in variants:
         precise = [d for d in departures if d['variant_id'] == variant['variant_id']]
         seconds = [d['departure_seconds'] for d in precise]

@@ -36,11 +36,17 @@ def create_app(db_path: str | Path | None = None,backend: str | None = None):
         existing = read_cache(folder, key)
         if existing is not None:
             return existing
-        geometry = network_geometry(app.state.con, day, source_id=source,
+        # Serialize only cold builds touching the shared shape cache. Ready memory
+        # and disk responses must not wait behind a superseded uncached view.
+        with geometry_lock:
+            existing = read_cache(folder,key)
+            if existing is not None:
+                return existing
+            geometry = network_geometry(app.state.con, day, source_id=source,
                                 source_ids=set(sources.split(',')) if sources is not None else None,
                                 shape_cache=shape_cache, mode=mode, active_only=active_only,
                                 max_routes=max_routes, max_points=max_points)
-        return write_cache(folder, key, geometry)
+            return write_cache(folder, key, geometry)
     app.add_middleware(CORSMiddleware,allow_origins=['http://127.0.0.1:5173','http://localhost:5173'],allow_credentials=False,allow_methods=['GET'],allow_headers=['*'])
 
     @app.get('/api/v1/health')
@@ -151,8 +157,7 @@ def create_app(db_path: str | Path | None = None,backend: str | None = None):
         selection = tuple(s['snapshot_id'] for s in selected)
         if sources is not None and set(sources.split(',')) == {s['source_id'] for s in selected}:
             sources = None
-        with geometry_lock:
-            payload = cached_network(selection, date_value, mode, source, sources, active_only, max_routes, max_points)
+        payload = cached_network(selection, date_value, mode, source, sources, active_only, max_routes, max_points)
         return Response(content=payload, media_type='application/geo+json')
 
     @app.get('/api/v1/route/{snapshot_id}/{route_id}/timetable')

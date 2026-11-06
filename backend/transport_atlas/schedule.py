@@ -118,9 +118,6 @@ def stop_board(con, snapshot_id: str, stop_id: str, wall_date: date | str,
     # Fetch maximal event offset for a conservative previous-service-day lookback.
     mx=one(con,"SELECT MAX(departure_sec) AS n FROM stop_times WHERE snapshot_id=?",(snapshot_id,))['n'] or 0
     mf=one(con,"SELECT MAX(end_sec) AS n FROM frequencies WHERE snapshot_id=?",(snapshot_id,))['n'] or 0
-    max_days=(max(mx,mf)//86400)+2
-    if max_days > 14:
-        raise ValueError('Feed contains exceptionally long trip times; explicit extended horizon support needed')
     start_local = datetime.combine(d,time(0))+timedelta(hours=start_hour)
     end_local = datetime.combine(d,time(0))+timedelta(hours=end_hour)
     exact_departures=[]
@@ -139,6 +136,15 @@ def stop_board(con, snapshot_id: str, stop_id: str, wall_date: date | str,
             bases[first['trip_id']] = first['departure_sec'] if first['departure_sec'] is not None else first['arrival_sec']
     offsets = {(item['trip_id'],item['departure_sec']): _departure_offsets(
         frequencies.get(item['trip_id'], []), bases.get(item['trip_id']), item['departure_sec']) for item in stop_rows}
+    # A downstream frequency event is start/end plus its template stop offset.
+    # Neither the template maximum nor the frequency end alone bounds that sum.
+    max_offset = max(mx, mf)
+    for exact, windows in offsets.values():
+        max_offset = max(max_offset, max(exact, default=0),
+                         max((w['end_sec'] for w in windows if w['precision']=='frequency'), default=0))
+    max_days=(max_offset//86400)+2
+    if max_days > 14:
+        raise ValueError('Feed contains exceptionally long trip times; explicit extended horizon support needed')
     for service_d in (d-timedelta(days=k) for k in range(max_days-1,-2,-1)):
         for item in stop_rows:
             cachekey=(service_d,item['service_id'])
@@ -168,7 +174,9 @@ def stop_board(con, snapshot_id: str, stop_id: str, wall_date: date | str,
                         trip_id=item['trip_id'],route_id=item['route_id'],headsign=item['headsign'],
                         service_date=service_d.isoformat(),start_local=st.isoformat(),end_local=en.isoformat(),
                         headway_seconds=window['headway_secs'],precision='frequency_not_exact'))
-    exact_departures.sort(key=lambda x:x['local_departure'])
+    # Local clock text can run backwards during the autumn DST transition.
+    exact_departures.sort(key=lambda x:datetime.fromisoformat(x['local_departure']).timestamp())
+    freq_windows.sort(key=lambda x:datetime.fromisoformat(x['start_local']).timestamp())
     return dict(stop=stop,wall_date=d.isoformat(),start_hour=start_hour,end_hour=end_hour,
                 departures=exact_departures,frequency_windows=freq_windows,
                 warning='Frequency windows provide headways only; their precise departure times are unknown.')
