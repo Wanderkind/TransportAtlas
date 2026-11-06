@@ -81,3 +81,36 @@ def test_deltas_compact_into_main_file(tmp_path, monkeypatch):
         assert again == cache
     finally:
         con.close()
+
+
+def test_partial_hydrate_never_compacts_away_unloaded_shapes(tmp_path, monkeypatch):
+    con, snapshot = _loaded(tmp_path)
+    folder = tmp_path/'shapes'
+    monkeypatch.setattr(shape_store, 'COMPACT_AFTER_DELTAS', 1)
+    try:
+        cache = {}
+        network_geometry(con, date(2026, 11, 6), shape_cache=cache)
+        shape_store.persist(cache, folder, snapshot, {})
+        stored = sorted(folder.glob('*--*.json'))
+        assert len(cache) >= 1 and stored
+        shape_store.hydrate({}, folder, snapshot, limit=0)  # nothing fits: incomplete
+        assert sorted(folder.glob('*--*.json')) == stored
+        assert not (folder/f"{snapshot['snapshot_id']}.json").exists()
+    finally:
+        con.close()
+
+
+def test_unserializable_levels_and_stale_parts_fail_safe(tmp_path):
+    con, snapshot = _loaded(tmp_path)
+    folder = tmp_path/'shapes'; folder.mkdir()
+    try:
+        sid = snapshot['snapshot_id']
+        stale = folder/f'{sid}--x.abc.part'; stale.write_bytes(b'x')
+        import os; os.utime(stale, (0, 0))
+        cache = {(sid, 'S'): (2, [[float('nan'), 1.0], [2.0, 3.0]], {})}
+        assert shape_store.persist(cache, folder, snapshot, {}) is False
+        assert not list(folder.glob('*--*.json'))
+        shape_store.hydrate({}, folder, snapshot, limit=SHAPE_CACHE_LIMIT)
+        assert not stale.exists()
+    finally:
+        con.close()

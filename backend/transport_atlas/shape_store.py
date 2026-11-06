@@ -14,6 +14,7 @@ build never rewrites the whole (tens of MB) document.
 from __future__ import annotations
 import json
 import logging
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -21,6 +22,7 @@ FORMAT_VERSION = 'shape-levels-v1'
 # Bump when simplify_line or its base tolerance changes, invalidating old files.
 ALGORITHM = 'radial-half-then-douglas-peucker-half/base-0.0001'
 COMPACT_AFTER_DELTAS = 8
+STALE_PART_SECONDS = 3600
 
 
 def _main(folder: Path, snapshot_id: str) -> Path:
@@ -51,7 +53,9 @@ def _read(path: Path, snapshot: dict) -> dict | None:
     return None
 
 
-def _merge(shape_cache: dict, sid: str, shapes: dict, limit: int):
+def _merge(shape_cache: dict, sid: str, shapes: dict, limit: int) -> bool:
+    """Merge stored shapes; return False if the cache limit left some unloaded."""
+    complete = True
     for shape_id, item in shapes.items():
         try:
             count, base, levels = item
@@ -64,6 +68,9 @@ def _merge(shape_cache: dict, sid: str, shapes: dict, limit: int):
                 existing[2].setdefault(tolerance, coords)
         elif len(shape_cache) < limit:
             shape_cache[(sid, shape_id)] = (int(count), base, levels)
+        else:
+            complete = False
+    return complete
 
 
 def _document(sid: str, snapshot: dict, shapes: dict) -> dict:
@@ -78,15 +85,19 @@ def _entry(entry) -> list:
 def hydrate(shape_cache: dict, folder: Path, snapshot: dict, *, limit: int) -> dict:
     """Load a snapshot's stored levels into the process cache; return its inventory."""
     sid = snapshot['snapshot_id']
+    _remove_stale_parts(folder, sid)
+    complete = True
     main = _read(_main(folder, sid), snapshot)
     if main is not None:
-        _merge(shape_cache, sid, main, limit)
+        complete = _merge(shape_cache, sid, main, limit) and complete
     deltas = _deltas(folder, sid)
     for path in deltas:
         shapes = _read(path, snapshot)
         if shapes is not None:
-            _merge(shape_cache, sid, shapes, limit)
-    if len(deltas) >= COMPACT_AFTER_DELTAS:
+            complete = _merge(shape_cache, sid, shapes, limit) and complete
+    # Compact only when everything stored is in memory; otherwise the rewritten
+    # main file would drop shapes that did not fit in the process cache.
+    if complete and len(deltas) >= COMPACT_AFTER_DELTAS:
         shapes = {shape_id: _entry(entry) for (s, shape_id), entry in list(shape_cache.items()) if s == sid}
         if write(_main(folder, sid), _document(sid, snapshot, shapes)):
             for path in deltas:
@@ -95,6 +106,21 @@ def hydrate(shape_cache: dict, folder: Path, snapshot: dict, *, limit: int) -> d
                 except OSError:
                     pass
     return inventory(shape_cache, sid)
+
+
+def _remove_stale_parts(folder: Path, snapshot_id: str):
+    """Delete temporaries abandoned by an interrupted writer (never read)."""
+    try:
+        parts = list(Path(folder).glob(f'{snapshot_id}*.part'))
+    except OSError:
+        return
+    now = time.time()
+    for path in parts:
+        try:
+            if now-path.stat().st_mtime > STALE_PART_SECONDS:
+                path.unlink()
+        except OSError:
+            pass
 
 
 def capture(shape_cache: dict, snapshot: dict, before: dict) -> tuple[str, dict] | None:
@@ -123,14 +149,15 @@ def capture(shape_cache: dict, snapshot: dict, before: dict) -> tuple[str, dict]
 def write(target: Path, document: dict) -> bool:
     """Serialize and atomically create or replace one store file."""
     target = Path(target)
-    payload = json.dumps(document, separators=(',', ':'), allow_nan=False).encode('utf-8')
     temporary = target.with_name(f'{target.stem}.{uuid4().hex}.part')
     try:
+        # Non-finite coordinates are not valid JSON; skip storing rather than fail a request.
+        payload = json.dumps(document, separators=(',', ':'), allow_nan=False).encode('utf-8')
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary.write_bytes(payload)
         temporary.replace(target)
         return True
-    except OSError:
+    except (OSError, ValueError, TypeError):
         logging.getLogger(__name__).warning('Shape level cache could not be written; continuing in memory.')
         return False
     finally:

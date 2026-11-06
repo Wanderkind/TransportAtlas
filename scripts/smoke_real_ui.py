@@ -36,6 +36,8 @@ def main():
         driver.get(BASE+'/?date=2026-11-06&basemap=plain&diagnostics=1')
         state=ready(driver,'2026-11-06',SOURCES)
         until(driver,lambda d: set(inspect(d)['network']['renderedSourceIds'])==SOURCES,'all four operators actually rendered')
+        # The overlay reports "drawn" only after visible tiles loaded; it must settle.
+        until(driver,lambda d:'349 drawn routes' in d.find_element(By.CSS_SELECTOR,'.map-overlay').text and 'Drawing' not in d.find_element(By.CSS_SELECTOR,'.app-status').text,'drawn status settles for the current network')
         report['initial_ms']=round((time.perf_counter()-started)*1000,1)
         assert state['network']['routeCount']==349,state
         assert set(state['stops']['sourceIds'])==SOURCES,state

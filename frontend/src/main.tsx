@@ -64,6 +64,7 @@ function showNetwork(m:MlMap,gate:SourceGate,net:NetworkGeometry,stops:Stop[],se
    ['focused',['focused-line','focused-schematic'],networkReady&&!!focused]
  ] as const){
    const visibility=valid&&gate.ready(source)?'visible':'none';
+   gate.shown(source,visibility==='visible');
    for(const layer of layers)if(m.getLayer(layer)&&m.getLayoutProperty(layer,'visibility')!==visibility)m.setLayoutProperty(layer,'visibility',visibility);
  }
  for(const [layer,quality] of [['route-highlight','source-shape'],['route-highlight-schematic','schematic-stop-link']]){
@@ -73,7 +74,7 @@ function showNetwork(m:MlMap,gate:SourceGate,net:NetworkGeometry,stops:Stop[],se
  if(m.getLayer('route-schematic'))m.setPaintProperty('route-schematic','line-opacity',selected?0.24:0.65);
 }
 /** The current network is drawn once its gate opened and its visible tiles finished loading. */
-const networkDrawn=(m:MlMap,gate:SourceGate)=>gate.ready('network')&&m.getLayoutProperty('route-network','visibility')==='visible'&&m.isSourceLoaded('network');
+const networkDrawn=(m:MlMap,gate:SourceGate)=>gate.drawn('network')&&m.getLayoutProperty('route-network','visibility')==='visible';
 function fitNetwork(m:MlMap,net:NetworkGeometry,stops:Stop[]){
  const bounds=new maplibregl.LngLatBounds();
  for(const f of net.features)for(const p of f.geometry.coordinates){if(Number.isFinite(p[0])&&Number.isFinite(p[1]))bounds.extend([p[0],p[1]])}
@@ -116,7 +117,7 @@ function App(){
  const setFocused=useCallback((geometry:NetworkGeometry|null)=>setFocus(previous=>previous?.context===filterKey&&previous.route===routeUid&&previous.geometry===geometry?previous:{context:filterKey,route:routeUid,geometry}),[filterKey,routeUid]);
  const [selectedDirection,setSelectedDirection]=useState('all');
  const [basemap,setBasemap]=useState<'streets'|'plain'>(new URLSearchParams(location.search).get('basemap')==='plain'?'plain':'streets'),[basemapWarning,setBasemapWarning]=useState('');
- const [renderedKey,setRenderedKey]=useState('');
+ const [renderedKey,setRenderedKey]=useState(''),[mapFailure,setMapFailure]=useState('');
  const mapEl=useRef<HTMLDivElement>(null),map=useRef<MlMap|null>(null),gateRef=useRef<SourceGate|null>(null),hasFit=useRef(false),previousStyle=useRef(basemap);
  const scopeRef=useRef(filterKey);scopeRef.current=filterKey;
  const chooseRoute=useCallback((route:Route)=>setSelection({context:scopeRef.current,route,stop:null}),[]);
@@ -147,6 +148,7 @@ function App(){
      ensureLayers(m);const d=display.current;
      showNetwork(m,gate,d.network,d.stops,d.route,d.focused,d.direction,d.networkReady,d.stopsReady,d.key);
      if(d.networkReady&&networkDrawn(m,gate))setRenderedKey(d.key);
+     setMapFailure(gate.failed('network')||gate.failed('stops')||gate.failed('focused')?d.key:'');
      if(!hasFit.current&&d.networkReady&&(d.network.features.length||d.stops.length)){fitNetwork(m,d.network,d.stops);hasFit.current=true}
    };
    m.on('style.load',update);
@@ -154,7 +156,8 @@ function App(){
    m.on('styledata',()=>{if(!m.getSource('network'))schedule()});
    // Tile completion only updates the "drawn" status; visibility never depends on it.
    m.on('sourcedata',event=>{if(['network','stops','focused'].includes(event.sourceId??''))schedule()});
-   m.on('error',()=>{if(previousStyle.current==='streets'){setBasemapWarning('Online basemap unavailable; switched to the plain offline map.');setBasemap('plain')}});
+   // Source data errors are reported by SourceGate; only basemap failures switch styles.
+   m.on('error',event=>{if(['network','stops','focused'].includes((event as {sourceId?:string}).sourceId??''))return;if(previousStyle.current==='streets'){setBasemapWarning('Online basemap unavailable; switched to the plain offline map.');setBasemap('plain')}});
    const openRoute=(evt:maplibregl.MapLayerMouseEvent)=>{
      const properties=evt.features?.[0]?.properties;if(!properties)return;
      const route=routesRef.current.find(r=>r.snapshot_id===properties.snapshot_id&&r.route_id===properties.route_id);
@@ -171,6 +174,7 @@ function App(){
    const m=map.current,gate=gateRef.current;if(!m?.getSource('network')||!gate)return;
    showNetwork(m,gate,visibleNetwork,visibleStops,selectedRoute,focused,selectedDirection,networkRequest.status==='ready',stopRequest.status==='ready',filterKey);
    if(networkRequest.status==='ready'&&networkDrawn(m,gate))setRenderedKey(filterKey);
+   setMapFailure(gate.failed('network')||gate.failed('stops')||gate.failed('focused')?filterKey:'');
  },[visibleNetwork,visibleStops,selectedRoute,focused,selectedDirection,filterKey,networkRequest.status,stopRequest.status]);
  const shown=useMemo(()=>routes.filter(r=>(!source||r.source_id===source)&&modeMatches(r.route_type,mode)&&!hiddenSources.includes(r.source_id)&&(!activeOnly||r.active_on_date)&&(`${r.route_id} ${r.short_name||''} ${r.long_name||''} ${r.source_id}`).toLowerCase().includes(search.toLowerCase())).slice(0,900),[routes,source,mode,activeOnly,search,hiddenSources]);
  const counts=summary?.snapshots.filter(s=>(!source||s.source_id===source)&&!hiddenSources.includes(s.source_id)).reduce((a,s)=>({
@@ -218,7 +222,7 @@ function App(){
      {basemapWarning&&<div className="warning"><WifiOff size={16}/> {basemapWarning}</div>}
      {error&&<div className="warning" role="alert"><AlertTriangle size={16}/> {error}<button type="button" onClick={()=>{snapshotRequest.retry();networkRequest.retry();stopRequest.retry();routeRequest.retry();summaryRequest.retry()}}>Retry current data</button></div>}
      <div className="map-container"><div ref={mapEl} className="map"/>
-       <div className="map-overlay"><strong>Geographic route atlas</strong><span>{networkRequest.status==='error'?'Network unavailable; previous data hidden.':networkLoading?'Loading current network…':renderedKey!==filterKey?'Drawing current network…':`${new Set(visibleNetwork.features.map(f=>f.properties.uid)).size} drawn routes · ${visibleNetwork.features.length} alignments`}</span></div>
+       <div className="map-overlay"><strong>Geographic route atlas</strong><span>{networkRequest.status==='error'?'Network unavailable; previous data hidden.':mapFailure===filterKey?'Map could not draw the current data; previous data hidden.':networkLoading?'Loading current network…':renderedKey!==filterKey?'Drawing current network…':`${new Set(visibleNetwork.features.map(f=>f.properties.uid)).size} drawn routes · ${visibleNetwork.features.length} alignments`}</span></div>
        <div className="map-actions"><button type="button" onClick={()=>{if(map.current)fitNetwork(map.current,focused??visibleNetwork,visibleStops)}} title="Fit routes and stops"><Maximize2 size={15}/> Fit</button>
         <button type="button" onClick={()=>{setBasemap(s=>s==='streets'?'plain':'streets');setBasemapWarning('')}} title="Toggle online street map">
          <MapIcon size={15}/>{basemap==='streets'?'Street map':'Plain map'}</button></div>
@@ -230,7 +234,7 @@ function App(){
          <strong>{s.source_id}</strong><span>{s.active_route_records} active routes</span><span>{s.scheduled_trip_instances} scheduled trips</span>
          <small>{s.feed_start}–{s.feed_end}</small></div>)}{!summary?.snapshots.length&&<span className="muted">No imported feeds. See README for an import command.</span>}</div></div>
    </main>
-   <aside className="inspector" data-filter-key={filterKey}><Inspector key={`${filterKey}|${routeUid}|${selectedStop?.stop_id??''}`} route={selectedRoute} stop={selectedStop} date={date} timetable={timetable} board={board} timetableError={timetableRequest.error} boardError={boardRequest.error} snapshots={snapshots} onGeometry={setFocused} onDirection={setSelectedDirection} onStop={chooseStop}/></aside>
+   <aside className="inspector" data-filter-key={filterKey}><Inspector key={`${filterKey}|${routeUid}|${selectedStop?`${selectedStop.snapshot_id}:${selectedStop.stop_id}`:''}`} route={selectedRoute} stop={selectedStop} date={date} timetable={timetable} board={board} timetableError={timetableRequest.error} boardError={boardRequest.error} snapshots={snapshots} onGeometry={setFocused} onDirection={setSelectedDirection} onStop={chooseStop}/></aside>
   </div><div className="app-status">{loading?'Loading dataset…':networkLoading?'Loading geometry…':stopLoading?'Loading current stops…':renderedKey!==filterKey&&networkRequest.status==='ready'?'Drawing current network…':`Showing ${visibleNetwork.features.length} route alignments`} · {searching?'Searching stops…':''} ·
     {basemap==='streets'?' Online basemap requires internet':' Offline plain map'} · Imported data may be incomplete or expired.</div>
  </div>

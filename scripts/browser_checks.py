@@ -37,7 +37,7 @@ INTERCEPT = r"""
   if(rule?.action==='warning'){
    const body=await response.json();
    if(body.metadata){body.metadata.truncated=true;body.metadata.warning='Injected incomplete geometry: local verification';body.metadata.missing_geometry_routes=1;}
-   if(body.departures){body.truncated=true;body.total_departures=body.departures.length+7;body.windows_truncated=true;}
+   if(body.departures){body.truncated=true;body.total_departures=body.departures.length+7;if('matching_departures' in body)body.matching_departures=body.departures.length+7;body.windows_truncated=true;}
    response=new Response(JSON.stringify(body),{status:200,headers:{'Content-Type':'application/json'}});
   }
   record.delivered=true;record.finished=performance.now();return response;

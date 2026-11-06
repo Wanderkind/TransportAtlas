@@ -82,13 +82,13 @@ export function Inspector({route,stop,date,timetable,board,timetableError,boardE
     {chosen&&<p>{chosen.scheduled_departures} scheduled trips · {chosen.frequency_windows} non-exact windows.<br/>
       Median departure interval at this variant’s first stop: {chosen.median_interval_minutes===null?'unavailable':`${chosen.median_interval_minutes.toFixed(1)} min`}</p>}
     <div className="section-heading"><span>Exact departures — click for stops</span></div>
-    {pageRequest.error&&<p role="alert">Departures unavailable: {pageRequest.error}</p>}
+    {pageRequest.error&&<p role="alert">Departures unavailable: {pageRequest.error} <button type="button" className="load-more" onClick={pageRequest.retry}>Retry</button></p>}
     {filtered&&!base&&!pageRequest.error&&<p role="status">Loading matching departures…</p>}
     {last?.truncated&&<p className="warning">Showing {trips.length} of {matching} matching departures. Summary counts cover the full route.</p>}
     <div className="departure-list">{trips.map((t,i)=><button type="button" className="departure" data-trip-id={t.trip_id} data-departure-seconds={t.departure_seconds} data-variant-id={t.variant_id} key={t.trip_id+i} onClick={()=>{setTripId(t.trip_id);setInstance(t)}}>
       <strong>{clock(t.departure_local)}</strong><span>{t.first_stop_name} → {t.last_stop_name}<small>{t.headsign} · direction {t.direction_id??'unspecified'}</small>
        <small>Arrives {clock(t.arrival_local)} · {t.departure_local.slice(0,10)}</small></span></button>)}</div>
-    {last?.truncated&&last.next_offset!=null&&<button type="button" className="load-more" disabled={pageLoading} onClick={()=>setWanted({key:pageKey,offset:last.next_offset!})}>{pageLoading?'Loading more departures…':'Load more departures'}</button>}
+    {last?.truncated&&last.next_offset!=null&&!pageRequest.error&&<button type="button" className="load-more" disabled={pageLoading} onClick={()=>setWanted({key:pageKey,offset:last.next_offset!})}>{pageLoading?'Loading more departures…':'Load more departures'}</button>}
     {windows.length>0&&<><div className="section-heading"><span>Frequency windows — no exact times</span></div>{windows.map((w,i)=><p className="freq-window" key={i}>{clock(w.start_local)}–{clock(w.end_local)} · every {w.headway_seconds/60} min · {w.headsign}</p>)}</>}
     {timetable.windows_truncated&&<p className="warning">Frequency window results are truncated.</p>}
     {base&&!trips.length&&!windows.length&&<p>No matching departures on this date.</p>}

@@ -157,6 +157,37 @@ physical-stop match, walking route or transfer. Tests
 limits, missing coordinates and API validation. The browser smoke checks the
 searched Olbia stop's list against the API.
 
+## November 7 (overnight) — independent review of the night's diff
+
+A separate read-only reviewer examined `ea4440b..b5af288`. It confirmed the core
+invariants: identical simplification, lock-guarded shape cache, validated store
+files, exact filtered paging, and MapLibre's shared `setData` promise preventing
+an early gate on A→B→A identity changes. It reported these edge cases, now fixed:
+
+1. "Drawn" status could flip before tiles loaded. A just-shown source is still
+   "unused" until the next `Style.update()`, so it reports loaded. `SourceGate`
+   now records when layers were shown and `drawn()` requires a later render plus
+   `isSourceLoaded`.
+2. A worker `setData` failure still opened the gate. MapLibre resolves the flush
+   promise and reports the failure as a map `error` with `sourceId`. The gate now
+   marks that identity failed and keeps it hidden. The overlay says "Map could not
+   draw the current data; previous data hidden". Source errors no longer trigger
+   the online-to-plain basemap fallback.
+3. A partially hydrated store (above the 8,192-shape process cache) could compact
+   away unloaded shapes. Compaction now runs only after a complete load.
+4. Non-finite coordinates made the JSON write raise outside its `try`, failing
+   requests repeatedly. Serialization errors now skip storing.
+5. Interrupted writers could leave `.part` files in `data/cache/shapes/`. They
+   are removed after an hour.
+6. A failed "Load more" or filtered page could not be retried; a Retry control
+   now calls the request's retry.
+7. The inspector remount key now includes the stop's snapshot, not just its id.
+
+Deliberately unchanged: nearby stops consider only the selected snapshots, which
+by design are the ones the UI can show; and `windows_truncated` on later pages,
+which the UI does not read. New tests: partial hydrate never compacts;
+unserializable levels and stale parts fail safe.
+
 ---
 
 ## Historical record: paused checkpoint (November 6–7)
