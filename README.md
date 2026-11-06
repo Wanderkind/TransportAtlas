@@ -17,6 +17,10 @@ Private, local-first GTFS Schedule importer and public-transport research dashbo
 
 Windows 10/11, Python 3.11 or later (3.12 recommended), Node.js 20 or later, and network access for the initial dependency install. Actual GTFS ZIPs must be obtained separately from a data provider. No accounts, API keys, cloud services, or public deployment are needed.
 
+## Official Sardinia GTFS sources (experimental)
+
+After installing the backend, use `python -m transport_atlas fetch-official --source aspo` to download a feed from the official publisher. Add `--discover-only` to inspect discovered resource URLs first. Follow [the validation guide](docs/REAL_FEED_VALIDATION.md) for source attribution, provenance, and imports. If a download link is not discoverable, download the GTFS ZIP manually from the official landing page and use the existing `import --file` workflow. **No real operator data is bundled.**
+
 ## Getting started (Windows PowerShell)
 
 ```powershell

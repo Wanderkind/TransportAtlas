@@ -30,6 +30,12 @@ def main(argv=None):
     d.add_argument('--start-hour',type=int,default=0)
     d.add_argument('--end-hour',type=int,default=24)
     sub.add_parser('sources',help='Print currently selected source snapshots')
+    fetch=sub.add_parser('fetch-official',help='Discover and retrieve current official Sardinian GTFS')
+    fetch.add_argument('--source',required=True,choices=['arst','aspo','atp_sassari','trenitalia_sardegna'])
+    fetch.add_argument('--output',type=Path)
+    fetch.add_argument('--discover-only',action='store_true')
+    fetch.add_argument('--resource-url',help='Use an exact verified official resource URL instead of discovery')
+
     serve=sub.add_parser('serve',help='Run localhost API')
     serve.add_argument('--port',type=int,default=8000)
     args=p.parse_args(argv)
@@ -38,6 +44,16 @@ def main(argv=None):
         os.environ['TRANSPORT_ATLAS_DB']=str(args.db)
         os.environ['TRANSPORT_ATLAS_DB_BACKEND']=str(args.backend)
         uvicorn.run('transport_atlas.api:app',host='127.0.0.1',port=args.port,log_level='info')
+        return
+    if args.command=='fetch-official':
+        from .official import discover, download
+        if args.discover_only:
+            result=discover(args.source)
+        else:
+            output=args.output or Path('data/downloads')/(args.source+'.zip')
+            result=download(args.source,output,resource_url=args.resource_url)
+            result['path']=str(output)
+        print(json.dumps(result,indent=2,ensure_ascii=False))
         return
     con=connect(args.db,args.backend)
     try:
