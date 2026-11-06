@@ -1,6 +1,6 @@
 # Transport Atlas
 
-Private, local-first GTFS Schedule importer and public-transport research dashboard. **Version 0.1.0 is the M0 + initial M1 implementation, not the full agreed MVP.** Its core use is importing real agency GTFS feeds into source-isolated snapshots, querying scheduled service by date, and exploring stops and routes in a preliminary browser UI.
+Private, local-first GTFS Schedule importer and public-transport research dashboard. **Version 0.2 development branch adds multi-route visualization and timetable inspection; it is not yet the full agreed MVP.** Its core use is importing real agency GTFS feeds into source-isolated snapshots, querying scheduled service by date, and exploring stops and routes in a preliminary browser UI.
 
 ## What works
 
@@ -9,7 +9,7 @@ Private, local-first GTFS Schedule importer and public-transport research dashbo
 - Record basic agencies, routes, stops, trips, stop times, weekly calendars, date exceptions, shapes, and frequencies in SQL.
 - Query scheduled-service counts on a GTFS service date, exact departures on a stop-local date (including trips whose GTFS time exceeds 24 hours), and non-exact headway windows **without inventing departures**.
 - Expose read-only FastAPI endpoints with date-aware route flags, stops, geometry, and stop departure boards.
-- Run a starter React + MapLibre browser atlas to select routes, inspect stops, and view service summaries. The frontend is a scaffold and has not yet been built in this offline execution environment.
+- Run a React + MapLibre browser atlas showing simultaneous imported route geometry, date/mode/source filters, route highlighting, stop inspectors, and route timetable summaries. The frontend build is checked in a separate GitHub Actions workflow.
 
 **Not yet complete:** verified four-operator live imports, MobilityData external validator integration, dataset-selection history UI, pattern grouping, advanced statistics, complete feed coverage, imported licensing metadata, sophisticated maps/tiles, exports, and production performance improvements.
 
@@ -68,7 +68,7 @@ npm run dev
 # http://127.0.0.1:5173
 ```
 
-The map uses an offline-capable blank base style by default. To show roads/place names, set `VITE_BASEMAP_STYLE_URL` to a licensed style URL (internet and provider terms apply) before starting Vite. Without a basemap, imported route shapes and stops still use geographic coordinates.
+The map defaults to the [OpenFreeMap Liberty](https://openfreemap.org/quick_start/) online street basemap; use the **Plain map** button for an offline-compatible blank map. The app automatically falls back to plain mode if the online style cannot load. Actual route geometry and timetables remain local.
 
 Stop the backend before running an import command against the same DuckDB file; concurrent cross-process write access is not yet supported. Restart the backend to load the updated selection.
 
@@ -103,24 +103,16 @@ DuckDB is the default. SQLite is supported exclusively as a zero-extra-dependenc
 python -m pytest -q backend/tests
 ```
 
-The source includes generated synthetic test feeds and test cases for weekly plus exception calendars, calendar-dates-only feeds, duplicate IDs across sources, 25:15:00 stop times, exact and non-exact frequencies, Europe/Rome DST, unsafe ZIPs, Unicode IDs, and transactional failure preservation. The CI workflow executes the Python suite but has not been run on GitHub yet.
+The source includes generated synthetic test feeds and test cases for weekly plus exception calendars, calendar-dates-only feeds, duplicate IDs across sources, 25:15:00 stop times, exact and non-exact frequencies, Europe/Rome DST, unsafe ZIPs, Unicode IDs, and transactional failure preservation. GitHub Actions contains separate Python test and frontend build workflows.
 
 ## Project references
 
 - [Detailed approved MVP specification](docs/MVP_SPEC.md)
 - [Initial milestone report](docs/IMPLEMENTATION_STATUS.md)
+- [v0.2 geographic atlas implementation and limitations](docs/V02_NETWORK_ATLAS.md)
 - [GTFS reference](https://gtfs.org/documentation/schedule/reference/)
 - [Sardegna Mobilità](https://www.sardegnamobilita.it/open-data/trasporti)
 
-## Optional: publish as a new private GitHub repository
+## GitHub repository
 
-The artifact is not yet pushed anywhere. After inspecting the source and creating a private repository named `Wanderkind/TransportAtlas`, you can publish it using the [GitHub CLI](https://cli.github.com/) from the project directory:
-
-```powershell
-git init -b main
-git add .
-git commit -m "Initial Transport Atlas GTFS prototype"
-gh repo create Wanderkind/TransportAtlas --private --source . --remote origin --push
-```
-
-If you use the included `.bundle` archive instead of the ZIP, the initial local commit already exists; do **not** run `git init` again. Clone the bundle and run `gh repo create ... --source . --remote origin --push` from the cloned directory. Check that the repository is **private** before pushing.
+The project is maintained at [Wanderkind/TransportAtlas](https://github.com/Wanderkind/TransportAtlas). Check the repository visibility before sharing imported data or licensing-restricted documents. The repository should contain **code and synthetic fixtures only**, never provider data until reuse rights are established.
