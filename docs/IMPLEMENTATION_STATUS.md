@@ -1,26 +1,27 @@
-# Implementation status — 2026-11-06
+# Implementation status — 2026-11-06 (v0.2 development)
 
-**Completed in this development artifact**
+## Implemented and tested
 
-- M0: project layout, Python package, read-only local API, React/MapLibre source scaffold, initial CI workflow, setup instructions, synthetic GTFS fixtures.
-- Initial M1: local GTFS archive/import, stable source+checksum snapshot identity, source-scoped raw IDs, source selection pointer, calendar and overnight schedule engine, exact/non-exact frequency separation, shape/schematic API, basic QA warnings.
-- Unit/API test suite and CLI smoke test pass under the offline SQLite test adapter. Results: 14 passed, 1 skipped (target DuckDB adapter not present). Three TypeScript files passed syntax-only transpilation, but dependency-aware build remains untested.
+- M0: repository, Python package, React + MapLibre frontend, synthetic fixture, GitHub CI.
+- Initial M1: source-specific archived GTFS snapshots, calendars/exception handling, overnight services, exact/non-exact frequency distinction.
+- M2 preview: simultaneous route geometry, source/mode/date filters, map route selection and highlighting, source vs schematic geometry, online street basemap with offline-compatible plain fallback.
+- Initial M3: route-level service-date departures, direction filter and stop boards (wall-date-based); no journey planner.
 
-**Verification limitations**
+## Verification
 
-- The execution environment could not download DuckDB; DuckDB adapter exists but its behavior is not yet runtime-verified.
-- Node dependencies were not available for the React/MapLibre build; TypeScript build and browser behavior are not verified.
-- A direct attempt to retrieve an ASPO ZIP was unsuccessful. No real Sardinian GTFS ZIP was imported; the tested fixture is synthetic.
-- No external MobilityData GTFS Validator was executed; the internal importer performs a limited subset of validation.
-- GitHub repository creation and remote CI were not performed; this package can be initialized as an independent private repository.
+- Local test environment: **19 passed, 1 skipped**; skipped test requires DuckDB, which was unavailable in the tool container.
+- GitHub Python test workflow: passed for v0.2 PR head `1ed560a`.
+- GitHub frontend TypeScript/Vite production build: passed for v0.2 PR head `1ed560a`.
+- GitHub Chrome smoke: passed for v0.2 PR head `1ed560a`. It imported the fictional GTFS feed, opened the UI, selected the overnight route, confirmed the inspector and route departure, and toggled the basemap.
+- No actual ARST/ATP/Trenitalia/ASPO feed was imported. No external GTFS validation was run. Performance and completeness on real regional feeds remain unverified.
 
-**Next highest-priority actions**
+## Limitations / future work
 
-1. Install dependencies on Windows and run tests against DuckDB, not only SQLite.
-2. Run npm install / npm run build and fix any TypeScript or MapLibre styling issues.
-3. Import a real ARST feed and inspect unsupported GTFS fields or data-quality problems. Measure import time and record counts.
-4. Add independent MobilityData validator and safe download/metadata workflow.
-5. Complete regional route visualization and date-aware pattern inspector, then repeat ingestion for ATP Sassari, ASPO Olbia and Trenitalia Sardegna.
-6. Implement more rigorous frequency/headway analytics, route-pattern grouping and cross-feed interoperability.
+1. Import and validate official GTFS ZIPs; preserve source URLs, retrieved dates, licensing and content hashes. Manual download required until a verified source downloader exists.
+2. Profile geographic geometry queries on real feeds; implement viewport/bbox filtering, route simplification or vector tiles for national coverage.
+3. Add pattern-level grouping, real route-variant selection, and full stop-by-stop timetables. Route direction IDs must not be interpreted as geographic directions.
+4. Avoid misinterpretation of capped geometry and stop results; page/stream large geographic datasets. The current metadata includes a truncation flag.
+5. Add historical feed comparison, connectivity analysis, and export formats; expand beyond Sardinia.
+6. Browser and DuckDB tests need eventual real Windows environment confirmation. Chrome CI does not substitute for validating actual imported transport data.
 
-**Status:** M0 partly complete (frontend build unverified); initial M1 slice implemented and fixture-tested. The full MVP M1–M4 is not finished.
+**Deployment recommendation:** suitable for local development and demonstration, not for public or research-critical production release.
