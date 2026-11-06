@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "catalog_name": "Sardegna Mobilita official GTFS schedule datasets",
+  "catalog_url": "https://www.sardegnamobilita.it/open-data/trasporti",
+  "sources": {
+    "arst": {
+      "publisher": "ARST SpA",
+      "official_dataset_id": "R_SARDEG:TRASP_00001",
+      "landing_url": "https://www.sardegnamobilita.it/open-data/quadri-orari-arst"
+    },
+    "aspo": {
+      "publisher": "ASPO Olbia",
+      "official_dataset_id": "R_SARDEG:TRASP_00003",
+      "landing_url": "https://www.sardegnamobilita.it/open-data/quadri-orari-aspo"
+    },
+    "atp_sassari": {
+      "publisher": "ATP Sassari",
+      "official_dataset_id": "R_SARDEG:TRASP_00004",
+      "landing_url": "https://www.sardegnamobilita.it/open-data/quadri-orari-atp-sassari"
+    },
+    "trenitalia_sardegna": {
+      "publisher": "Direzione Generale dei trasporti / Trenitalia",
+      "official_dataset_id": "R_SARDEG:TRASP_00008",
+      "landing_url": "https://www.sardegnamobilita.it/open-data/quadri-orari-trenitalia"
+    }
+  }
+}
