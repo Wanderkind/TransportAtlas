@@ -90,6 +90,10 @@ def set_date(driver, date):
     element=driver.find_element(By.CSS_SELECTOR,'input[aria-label="Service date"]')
     driver.execute_script("Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(arguments[0],arguments[1]);arguments[0].dispatchEvent(new Event('input',{bubbles:true}));arguments[0].dispatchEvent(new Event('change',{bubbles:true}));",element,date)
 
+def set_input(driver, element, value):
+    """Set a React-controlled input; Selenium's clear() does not emit React's input event."""
+    driver.execute_script("Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(arguments[0],arguments[1]);arguments[0].dispatchEvent(new Event('input',{bubbles:true}));",element,value)
+
 def source(driver, value):
     Select(driver.find_element(By.CSS_SELECTOR,'select[aria-label="Data source"]')).select_by_value(value)
 

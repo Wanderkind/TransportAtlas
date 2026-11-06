@@ -110,9 +110,9 @@ API health: `http://127.0.0.1:8000/api/v1/health`; API docs:
 
 ## Explore
 
-The [unfinished-work handoff](docs/PHASE3_HANDOFF.md) lists the rendering blocker,
-resume commands and remaining checks. The user authorized publishing this
-checkpoint on the development branch; it is not ready for integration.
+The [Phase 3 handoff](docs/PHASE3_HANDOFF.md) and corrective review record the
+resolved MapLibre rendering blocker, green local browser verification and the
+remaining latency limits. Merging is not authorized by these documents.
 The [Phase 3 corrective review](docs/CORRECTIVE_REVIEW_20261106.md) records the
 current independent audit, browser regressions and performance limits. This phase
 was initially local-only. The later checkpoint push authorization does not

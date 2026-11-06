@@ -1,4 +1,76 @@
-# Phase 3 corrective review — paused checkpoint
+# Phase 3 corrective review
+
+## Resumed November 7 — browser blocker resolved, local verification green
+
+The rendering blocker is resolved and **both browser suites pass** on the
+production build, followed by a green `.\scripts\verify_local.ps1 -Browser`
+(74 Python tests in 63.88 s, loopback startup 6.24 s, TypeScript/Vite build,
+real-data smoke and filter races; no JavaScript errors). Data-audit code did not
+change, so the independent audit was not rerun. Nothing was merged, deployed,
+or run in remote CI.
+
+**Root cause (verified in MapLibre 6.16.0 source and by probing a headless run).**
+Two coupled defects came from gating layer visibility on `map.isSourceLoaded()`:
+
+1. `Style.update()` decides which sources upload tile buffers (`tileManager.used`)
+   from layer visibility, then synchronously fires a `sourcedata` event
+   (`sourceDataType: 'visibility'`). The old handler made layers visible inside
+   that event, so the painter drew buckets whose `ProgramConfiguration._buffers`
+   were never uploaded; this is the `VertexArrayObject.bind` `undefined.length` crash.
+2. A source whose layers are all hidden is unused, drops its in-view tiles and
+   reports `loaded() === true`. The gate therefore livelocked: show, tiles load
+   (not loaded), hide (loaded), show again. A probe recorded this cycle every
+   few seconds with 119,406-point tiles never finishing. The earlier rAF trial
+   removed the crash but not the livelock; it passed once only by timing luck.
+
+**Fix.** `frontend/src/sourceGate.ts` ties visibility to data identity instead
+of tile loading. An identity change hides that source's layers synchronously
+and calls `setData()` (a Promise in MapLibre 6). Layers return only after that
+Promise resolves for the current identity *and* a full map frame has rendered
+since hiding, so the hidden frame already dropped tiles built from older data.
+All map mutations happen outside MapLibre's render pass (React layout effect,
+`style.load` or a coalesced animation frame). Layers are created hidden, and
+the "drawn" status (`renderedKey`) still waits for actual tile loading.
+
+Browser evidence (ignored, `data/local-verification/phase3/`):
+`filter-races-1793982632520114200.json` and `browser-1793982567920123000.json`
+from the workflow run, plus the earlier standalone passes
+`filter-races-1793981286982030300.json` and `browser-1793982130410767800.json`.
+Failed intermediate runs from this session remain alongside them. Baseline
+rendered-feature checks now see all four operators (2,648 rendered line
+features); the old map was hidden 99–483 ms after a date change.
+
+Test-harness fixes (not product changes): stop-name comparison normalizes HTML
+whitespace (ATP `Via  Baldedda`); React-controlled search inputs are cleared via
+the native setter plus an `input` event, because Selenium `clear()` emits none;
+the warning-date check waits for its route catalog; `verify_local.ps1` judges
+native steps by exit code, since PowerShell 5.1 promoted Vite's redirected
+stderr bundle warning to a terminating error.
+
+**Measured performance (after change, browser idle; `after-http.json`).** Five
+sequential loopback samples, median (max): summary 443.70 ms (1,418.77);
+active stops 4,291.38 ms (12,141.52); cached regional network 505.48 ms (713.69);
+ASPO timetable 235.28 ms (270.29); ASPO board 180.48 ms (210.59). Compared with
+the baseline medians (1,265.45 / 4,522.50 / 302.32 / 379.88 / 184.14 ms), the
+cached network median is within its observed sample spread (252.67–713.69 ms);
+no regression is claimed from five samples. Isolated cold startup: 5.92 s and
+6.24 s in two workflow runs.
+Browser readiness with warm caches: all-four overview 7.71 s and 8.35 s; cached
+date change to new map 5.21 s (10.25 s in an earlier standalone run). **The
+five-second target is not met.** Active stops (≈4–12 s) are the dominant cost.
+An uncached Nov 7 regional build during a browser run exceeded the test's 120 s
+wait while other requests ran concurrently; its cache file appeared about five
+minutes after the services started. This was incidental, not a controlled
+benchmark. Caches and archives were not deleted to repeat it.
+
+**Integration recommendation.** Local correctness verification is complete and
+green. The branch is reviewable, but merging remains the user's decision and
+was not done. Remaining limitations are P2 latency (active stops, uncached
+regional geometry) and the existing Starlette/httpx and bundle-size warnings.
+
+---
+
+## Historical record: paused checkpoint (November 6–7)
 
 Update, November 7: the user subsequently authorized committing and pushing this
 unfinished checkpoint. See `PHASE3_HANDOFF.md` for the current remaining-work

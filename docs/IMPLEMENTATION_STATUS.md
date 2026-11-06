@@ -2,6 +2,16 @@
 
 ## Current: Phase 3 corrective stabilization
 
+**November 7, resumed:** the MapLibre rendering blocker is fixed. Visibility is
+now gated on data identity (`frontend/src/sourceGate.ts`) instead of
+`isSourceLoaded`, which crashed or livelocked. Both browser suites and the
+complete `verify_local.ps1 -Browser` workflow pass locally, and after-change
+HTTP and browser timings are recorded. The five-second target is not met;
+active stops (about 4–12 s) and uncached regional geometry remain the P2
+limitations. Not merged; no PR, deployment or remote CI. Details:
+[corrective review](CORRECTIVE_REVIEW_20261106.md). Text below up to the
+Phase 2 record describes the earlier paused checkpoint.
+
 Checkpoint update, November 7: the user authorized committing and pushing the
 unfinished work to the development branch. See [handoff](PHASE3_HANDOFF.md).
 The local-only/uncommitted statements below record the earlier pause. Rendering

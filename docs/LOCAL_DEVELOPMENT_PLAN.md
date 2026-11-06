@@ -59,6 +59,10 @@ under ignored data paths. No import should repeat needlessly.
 
 ## Phase 3 corrective stabilization (current instructions)
 
+Resumed November 7: rendering blocker resolved; both browser suites and the full
+`verify_local.ps1 -Browser` workflow pass; performance measured (target not met).
+The checklist below is updated accordingly; the pause notes are historical.
+
 Checkpoint update, November 7: the user subsequently authorized a commit and push
 of the unfinished development branch. `PHASE3_HANDOFF.md` contains the resume
 checklist. Earlier local-only/uncommitted wording below records the pause and
@@ -76,20 +80,20 @@ Base: `32abd1509182e8b998f94494a6f9d5cc458a0372`. The attached Phase 3 request
 supersedes the earlier publishing instruction: **local commits only; no push,
 PR, main merge or GitHub Actions**. Preserve the existing checkout and evidence.
 
-- [ ] Reproduce asynchronous date/mode/source races; bind every displayed dataset
+- [x] Reproduce asynchronous date/mode/source races; bind every displayed dataset
   and inspector to its exact request identity, clear stale map sources immediately,
   and test delayed, aborted, failed and out-of-order responses in the browser.
-- [ ] Reconcile source/mode route records, trip-referenced, active, eligible,
+- [x] Reconcile source/mode route records, trip-referenced, active, eligible,
   rendered, no-trip, insufficient-geometry and display-limit categories with
   precise denominators. Add synthetic regressions and visible coverage indicators.
-- [ ] Strengthen browser checks using actual MapLibre sources/features and all
+- [x] Strengthen browser checks using actual MapLibre sources/features and all
   four sources, including variants, exact trips, offline mode and error states.
-- [ ] Independently audit raw ZIPs, hashes, provenance and DuckDB SQL for all four
+- [x] Independently audit raw ZIPs, hashes, provenance and DuckDB SQL for all four
   dates, without downloading or reimporting. Audit timetable edge cases separately.
-- [ ] Profile cold/cached backend, stop queries and browser/source transitions;
+- [x] Profile cold/cached backend, stop queries and browser/source transitions;
   apply only measured incremental improvements and retain all supported geometry.
-- [ ] Run the complete local workflow, review the final diff, write
-  `docs/CORRECTIVE_REVIEW_20261106.md`, and commit locally.
+- [x] Run the complete local workflow, review the final diff and write
+  `docs/CORRECTIVE_REVIEW_20261106.md`. (Committing awaits the user's request.)
 
 Root owns network/API/UI/browser changes. Independent agents own the evidence
 audit script and timetable regressions; they do not alter the production database

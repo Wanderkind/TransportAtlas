@@ -1,7 +1,7 @@
 import React, {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import * as maplibregl from 'maplibre-gl';
-import {GeoJSONSource, Map as MlMap} from 'maplibre-gl';
+import {Map as MlMap} from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import type {FeatureCollection} from 'geojson';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -14,6 +14,7 @@ import {Inspector} from './Inspector';
 import {installDiagnostics} from './diagnostics';
 import {useKeyedRequest} from './useKeyedRequest';
 import {CoveragePanel} from './CoveragePanel';
+import {SourceGate} from './sourceGate';
 maplibregl.setWorkerUrl(workerUrl);
 
 const STREETS_STYLE='https://tiles.openfreemap.org/styles/liberty';
@@ -24,45 +25,45 @@ const emptyGeoJSON=():FeatureCollection=>({type:'FeatureCollection',features:[]}
 const emptyNetwork=():NetworkGeometry=>({type:'FeatureCollection',features:[],metadata:{service_date:'',active_only:true,source_count:0,route_count:0,feature_count:0,point_count:0,truncated:false,missing_geometry_routes:0,warning:null}});
 const key=(r:{snapshot_id:string;route_id:string})=>`${r.snapshot_id}:${r.route_id}`;
 const modeMatches=(n:number,m:string)=>m==='all'||(m==='tram'?n===0:m==='rail'?[1,2,5,12].includes(n):m==='bus'?[3,11].includes(n):n===4);
-const sourceData=new WeakMap<GeoJSONSource,unknown>();
 const stopData=new WeakMap<Stop[],FeatureCollection>();
-function updateSource(source:GeoJSONSource,data:FeatureCollection,identity:unknown){if(sourceData.get(source)!==identity){source.setData(data);sourceData.set(source,identity)}}
 
 function ensureLayers(m:MlMap){
  if(!m.getSource('network'))m.addSource('network',{type:'geojson',data:emptyGeoJSON()});
- if(!m.getLayer('route-network'))m.addLayer({id:'route-network',type:'line',source:'network',
+ if(!m.getLayer('route-network'))m.addLayer({layout:{visibility:'none'},id:'route-network',type:'line',source:'network',
     filter:['==',['get','quality'],'source-shape'],
     paint:{'line-color':['get','color'],'line-width':['interpolate',['linear'],['zoom'],5,1.3,9,3],
            'line-opacity':0.66}});
- if(!m.getLayer('route-schematic'))m.addLayer({id:'route-schematic',type:'line',source:'network',
+ if(!m.getLayer('route-schematic'))m.addLayer({layout:{visibility:'none'},id:'route-schematic',type:'line',source:'network',
     filter:['==',['get','quality'],'schematic-stop-link'],
     paint:{'line-color':['get','color'],'line-width':2.5,'line-opacity':0.65,'line-dasharray':[3,2]}});
- if(!m.getLayer('route-highlight'))m.addLayer({id:'route-highlight',type:'line',source:'network',
+ if(!m.getLayer('route-highlight'))m.addLayer({layout:{visibility:'none'},id:'route-highlight',type:'line',source:'network',
     filter:['==',['get','uid'],'__none__'],
     paint:{'line-color':'#ffb53b','line-width':6,'line-opacity':0.96}});
- if(!m.getLayer('route-highlight-schematic'))m.addLayer({id:'route-highlight-schematic',type:'line',source:'network',filter:['==',['get','uid'],'__none__'],paint:{'line-color':'#ffb53b','line-width':6,'line-opacity':0.96,'line-dasharray':[3,2]}});
+ if(!m.getLayer('route-highlight-schematic'))m.addLayer({layout:{visibility:'none'},id:'route-highlight-schematic',type:'line',source:'network',filter:['==',['get','uid'],'__none__'],paint:{'line-color':'#ffb53b','line-width':6,'line-opacity':0.96,'line-dasharray':[3,2]}});
  if(!m.getSource('focused'))m.addSource('focused',{type:'geojson',data:emptyGeoJSON()});
- if(!m.getLayer('focused-line'))m.addLayer({id:'focused-line',type:'line',source:'focused',filter:['==',['get','quality'],'source-shape'],paint:{'line-color':'#ffb53b','line-width':7}});
- if(!m.getLayer('focused-schematic'))m.addLayer({id:'focused-schematic',type:'line',source:'focused',filter:['==',['get','quality'],'schematic-stop-link'],paint:{'line-color':'#ffb53b','line-width':7,'line-dasharray':[3,2]}});
+ if(!m.getLayer('focused-line'))m.addLayer({layout:{visibility:'none'},id:'focused-line',type:'line',source:'focused',filter:['==',['get','quality'],'source-shape'],paint:{'line-color':'#ffb53b','line-width':7}});
+ if(!m.getLayer('focused-schematic'))m.addLayer({layout:{visibility:'none'},id:'focused-schematic',type:'line',source:'focused',filter:['==',['get','quality'],'schematic-stop-link'],paint:{'line-color':'#ffb53b','line-width':7,'line-dasharray':[3,2]}});
  if(!m.getSource('stops'))m.addSource('stops',{type:'geojson',data:emptyGeoJSON(),cluster:true,clusterRadius:35,clusterMaxZoom:10});
- if(!m.getLayer('stop-clusters'))m.addLayer({id:'stop-clusters',type:'circle',source:'stops',filter:['has','point_count'],paint:{'circle-radius':13,'circle-color':'#1d6489','circle-opacity':0.7}});
- if(!m.getLayer('stop-circles'))m.addLayer({id:'stop-circles',type:'circle',source:'stops',filter:['!', ['has','point_count']],
+ if(!m.getLayer('stop-clusters'))m.addLayer({layout:{visibility:'none'},id:'stop-clusters',type:'circle',source:'stops',filter:['has','point_count'],paint:{'circle-radius':13,'circle-color':'#1d6489','circle-opacity':0.7}});
+ if(!m.getLayer('stop-circles'))m.addLayer({layout:{visibility:'none'},id:'stop-circles',type:'circle',source:'stops',filter:['!', ['has','point_count']],
     paint:{'circle-radius':['interpolate',['linear'],['zoom'],5,2,10,4],
            'circle-color':'#f9fcff','circle-stroke-width':1.4,'circle-stroke-color':'#1d6489'}});
 }
-function showNetwork(m:MlMap,net:NetworkGeometry,stops:Stop[],selected:Route|null,focused:NetworkGeometry|null,direction:string,networkReady:boolean,stopsReady:boolean,requestKey:string){
+function showNetwork(m:MlMap,gate:SourceGate,net:NetworkGeometry,stops:Stop[],selected:Route|null,focused:NetworkGeometry|null,direction:string,networkReady:boolean,stopsReady:boolean,requestKey:string){
  if(!m.getSource('network'))return;
- updateSource(m.getSource('network') as GeoJSONSource,{type:'FeatureCollection',features:net.features,request_key:requestKey} as FeatureCollection,net);
- updateSource(m.getSource('focused') as GeoJSONSource,(focused??emptyGeoJSON()) as FeatureCollection,focused);
+ // Identity changes hide that source's layers synchronously below and send the
+ // new data; layers reappear only once SourceGate confirms the current identity.
+ gate.set('network',{type:'FeatureCollection',features:net.features,request_key:requestKey} as FeatureCollection,net);
+ gate.set('focused',(focused??emptyGeoJSON()) as FeatureCollection,focused);
  let points=stopData.get(stops);
  if(!points){points={type:'FeatureCollection',features:stops.filter(s=>Number.isFinite(s.lat)&&Number.isFinite(s.lon)).map(s=>({type:'Feature' as const,properties:{snapshot_id:s.snapshot_id,source_id:s.source_id,stop_id:s.stop_id},geometry:{type:'Point' as const,coordinates:[s.lon,s.lat]}})),request_key:requestKey} as FeatureCollection;stopData.set(stops,points)}
- updateSource(m.getSource('stops') as GeoJSONSource,points,stops);
+ gate.set('stops',points,stops);
  for(const [source,layers,valid] of [
    ['network',['route-network','route-schematic','route-highlight','route-highlight-schematic'],networkReady],
    ['stops',['stop-clusters','stop-circles'],stopsReady],
    ['focused',['focused-line','focused-schematic'],networkReady&&!!focused]
  ] as const){
-   const visibility=valid&&m.isSourceLoaded(source)?'visible':'none';
+   const visibility=valid&&gate.ready(source)?'visible':'none';
    for(const layer of layers)if(m.getLayer(layer)&&m.getLayoutProperty(layer,'visibility')!==visibility)m.setLayoutProperty(layer,'visibility',visibility);
  }
  for(const [layer,quality] of [['route-highlight','source-shape'],['route-highlight-schematic','schematic-stop-link']]){
@@ -71,6 +72,8 @@ function showNetwork(m:MlMap,net:NetworkGeometry,stops:Stop[],selected:Route|nul
  if(m.getLayer('route-network'))m.setPaintProperty('route-network','line-opacity',selected?0.24:0.66);
  if(m.getLayer('route-schematic'))m.setPaintProperty('route-schematic','line-opacity',selected?0.24:0.65);
 }
+/** The current network is drawn once its gate opened and its visible tiles finished loading. */
+const networkDrawn=(m:MlMap,gate:SourceGate)=>gate.ready('network')&&m.getLayoutProperty('route-network','visibility')==='visible'&&m.isSourceLoaded('network');
 function fitNetwork(m:MlMap,net:NetworkGeometry,stops:Stop[]){
  const bounds=new maplibregl.LngLatBounds();
  for(const f of net.features)for(const p of f.geometry.coordinates){if(Number.isFinite(p[0])&&Number.isFinite(p[1]))bounds.extend([p[0],p[1]])}
@@ -114,7 +117,7 @@ function App(){
  const [selectedDirection,setSelectedDirection]=useState('all');
  const [basemap,setBasemap]=useState<'streets'|'plain'>(new URLSearchParams(location.search).get('basemap')==='plain'?'plain':'streets'),[basemapWarning,setBasemapWarning]=useState('');
  const [renderedKey,setRenderedKey]=useState('');
- const mapEl=useRef<HTMLDivElement>(null),map=useRef<MlMap|null>(null),hasFit=useRef(false),previousStyle=useRef(basemap);
+ const mapEl=useRef<HTMLDivElement>(null),map=useRef<MlMap|null>(null),gateRef=useRef<SourceGate|null>(null),hasFit=useRef(false),previousStyle=useRef(basemap);
  const scopeRef=useRef(filterKey);scopeRef.current=filterKey;
  const chooseRoute=useCallback((route:Route)=>setSelection({context:scopeRef.current,route,stop:null}),[]);
  const chooseStop=useCallback((stop:Stop)=>setSelection({context:scopeRef.current,route:null,stop}),[]);
@@ -133,22 +136,24 @@ function App(){
    const m=new maplibregl.Map({container:mapEl.current,style:basemap==='plain'?PLAIN_STYLE:STREETS_STYLE,center:[9.13,40],zoom:7});map.current=m;
    const removeDiagnostics=installDiagnostics(m,()=>diagnosticState.current);
    m.addControl(new maplibregl.NavigationControl(),'top-right');
+   // Every map mutation below runs outside MapLibre's render pass: either from
+   // style.load or from a coalesced animation frame, never inside a map event
+   // fired by Style.update().
+   let frame:number|null=null;
+   const schedule=()=>{if(frame===null)frame=requestAnimationFrame(()=>{frame=null;update()})};
+   const gate=new SourceGate(m,schedule);gateRef.current=gate;
    const update=()=>{
+     if(!m.getSource('network'))gate.reset();
      ensureLayers(m);const d=display.current;
-     showNetwork(m,d.network,d.stops,d.route,d.focused,d.direction,d.networkReady,d.stopsReady,d.key);
-     if(d.networkReady&&m.isSourceLoaded('network'))setRenderedKey(d.key);
+     showNetwork(m,gate,d.network,d.stops,d.route,d.focused,d.direction,d.networkReady,d.stopsReady,d.key);
+     if(d.networkReady&&networkDrawn(m,gate))setRenderedKey(d.key);
      if(!hasFit.current&&d.networkReady&&(d.network.features.length||d.stops.length)){fitNetwork(m,d.network,d.stops);hasFit.current=true}
    };
    m.on('style.load',update);
-   // Source events fire inside MapLibre's tile/bucket processing. Mutating layer
-   // visibility there can expose a bucket before its paint buffers are uploaded.
-   // Coalesce readiness updates after that processing; filter changes still hide
-   // old layers synchronously in the layout effect below.
-   let sourceFrame:number|null=null;
-   m.on('sourcedata',event=>{
-     if(['network','stops','focused'].includes(event.sourceId??'')&&sourceFrame===null)
-       sourceFrame=requestAnimationFrame(()=>{sourceFrame=null;update()});
-   });
+   // A diffed basemap swap can drop our sources without style.load; re-add them.
+   m.on('styledata',()=>{if(!m.getSource('network'))schedule()});
+   // Tile completion only updates the "drawn" status; visibility never depends on it.
+   m.on('sourcedata',event=>{if(['network','stops','focused'].includes(event.sourceId??''))schedule()});
    m.on('error',()=>{if(previousStyle.current==='streets'){setBasemapWarning('Online basemap unavailable; switched to the plain offline map.');setBasemap('plain')}});
    const openRoute=(evt:maplibregl.MapLayerMouseEvent)=>{
      const properties=evt.features?.[0]?.properties;if(!properties)return;
@@ -159,13 +164,13 @@ function App(){
    m.on('click','stop-clusters',evt=>{const f=evt.features?.[0];if(f?.geometry.type==='Point')m.easeTo({center:f.geometry.coordinates as [number,number],zoom:Math.min(m.getZoom()+2,12)})});
    m.on('click','stop-circles',evt=>{const p=evt.features?.[0]?.properties;const stop=display.current.stops.find(s=>s.snapshot_id===p?.snapshot_id&&s.stop_id===p?.stop_id);if(stop)chooseStop(stop)});
    for(const layer of ['route-network','route-schematic','stop-circles']){m.on('mouseenter',layer,()=>{m.getCanvas().style.cursor='pointer'});m.on('mouseleave',layer,()=>{m.getCanvas().style.cursor=''})}
-   return ()=>{if(sourceFrame!==null)cancelAnimationFrame(sourceFrame);removeDiagnostics();map.current=null;m.remove()};
+   return ()=>{if(frame!==null)cancelAnimationFrame(frame);gate.destroy();gateRef.current=null;removeDiagnostics();map.current=null;m.remove()};
  },[]);
  useEffect(()=>{if(map.current&&previousStyle.current!==basemap){previousStyle.current=basemap;map.current.setStyle(basemap==='streets'?STREETS_STYLE:PLAIN_STYLE)}},[basemap]);
  useLayoutEffect(()=>{
-   const m=map.current;if(!m?.getSource('network'))return;
-   showNetwork(m,visibleNetwork,visibleStops,selectedRoute,focused,selectedDirection,networkRequest.status==='ready',stopRequest.status==='ready',filterKey);
-   if(networkRequest.status==='ready'&&m.isSourceLoaded('network'))setRenderedKey(filterKey);
+   const m=map.current,gate=gateRef.current;if(!m?.getSource('network')||!gate)return;
+   showNetwork(m,gate,visibleNetwork,visibleStops,selectedRoute,focused,selectedDirection,networkRequest.status==='ready',stopRequest.status==='ready',filterKey);
+   if(networkRequest.status==='ready'&&networkDrawn(m,gate))setRenderedKey(filterKey);
  },[visibleNetwork,visibleStops,selectedRoute,focused,selectedDirection,filterKey,networkRequest.status,stopRequest.status]);
  const shown=useMemo(()=>routes.filter(r=>(!source||r.source_id===source)&&modeMatches(r.route_type,mode)&&!hiddenSources.includes(r.source_id)&&(!activeOnly||r.active_on_date)&&(`${r.route_id} ${r.short_name||''} ${r.long_name||''} ${r.source_id}`).toLowerCase().includes(search.toLowerCase())).slice(0,900),[routes,source,mode,activeOnly,search,hiddenSources]);
  const counts=summary?.snapshots.filter(s=>(!source||s.source_id===source)&&!hiddenSources.includes(s.source_id)).reduce((a,s)=>({

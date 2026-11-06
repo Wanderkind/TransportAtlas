@@ -1,4 +1,15 @@
-# TransportAtlas — unfinished work handoff
+# TransportAtlas — Phase 3 handoff
+
+**Update, November 7 (resumed session):** the P1 rendering blocker is resolved
+and local verification is green. Both browser scripts and
+`verify_local.ps1 -Browser` pass, and after-change performance is measured.
+See the top section of `CORRECTIVE_REVIEW_20261106.md` for the root cause, the
+`sourceGate.ts` fix, evidence files and measurements. The remaining work is P2
+latency (active stops; uncached regional geometry) and P3 milestones. No merge,
+PR, deployment or remote CI was performed; integration is the user's decision.
+The original checkpoint text follows for history.
+
+## Original checkpoint (before resolution)
 
 Checkpoint: November 7, 2026 (Asia/Seoul).
 Branch: `codex/local-real-feed-atlas`.
@@ -54,14 +65,14 @@ truncation warnings, loading/errors and delayed/out-of-order completions.
 
 ## Complete local verification
 
-- [ ] Resolve rendering failure and obtain passing runs of both browser scripts.
-- [ ] Run the complete workflow with services running:
+- [x] Resolve rendering failure and obtain passing runs of both browser scripts.
+- [x] Run the complete workflow with services running:
   `.\scripts\verify_local.ps1 -Browser`.
-- [ ] If data-audit code changes, stop services and run
+- [x] (Not needed: data-audit code unchanged.) If data-audit code changes, stop services and run
   `.\.venv\Scripts\python.exe scripts/audit_local_evidence.py --output data/local-verification/phase3/resume-audit.json`.
   DuckDB requires stopping the backend before a separate audit process opens it.
-- [ ] Review the complete diff, reconcile the status/report with observed results,
-  and decide integration readiness only after browser checks pass.
+- [x] Review the complete diff and reconcile the status/report with observed
+  results. Browser checks pass; integration remains the user's decision.
 
 The previous checkpoint recorded 74 passing Python tests, a successful
 TypeScript/Vite build and 317 passing independent feed-audit checks. See
@@ -71,12 +82,12 @@ large Vite MapLibre bundle warning remain visible.
 
 ## Measure remaining performance (P2)
 
-- [ ] Measure isolated cold backend startup with `scripts/check_startup.py`.
-- [ ] Run controlled after-change HTTP samples while browser tests are idle:
+- [x] Measure isolated cold backend startup with `scripts/check_startup.py` (5.92 s, 6.24 s).
+- [x] Run controlled after-change HTTP samples while browser tests are idle:
   `.\.venv\Scripts\python.exe scripts/profile_local.py --output data/local-verification/phase3/after-http.json`.
-- [ ] Record frontend data arrival, MapLibre source readiness, rendered readiness
-  and date/filter transitions using `?diagnostics=1`.
-- [ ] Compare with the preserved baseline; do not claim the five-second target
+- [x] Record frontend data arrival, MapLibre source readiness, rendered readiness
+  and date/filter transitions using `?diagnostics=1` (browser reports' timings).
+- [x] Compare with the preserved baseline; do not claim the five-second target
   without a direct measurement. Keep all supported routes and variants.
 
 Baseline medians: summary 1,265.45 ms; stops 4,522.50 ms; cached network 302.32 ms;

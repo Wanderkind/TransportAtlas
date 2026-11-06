@@ -5,7 +5,7 @@ import traceback
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 from browser_checks import (BASE, SOURCES, add_rule, api, browser, disable,
-    inspect, logs, mode, ready, screenshot, set_date, source, until, write_report)
+    inspect, logs, mode, ready, screenshot, set_date, set_input, source, until, write_report)
 
 
 def clock(seconds):
@@ -69,7 +69,8 @@ def main():
             offset=departure['departure_seconds']-departure['template_first_seconds']
             rows=driver.find_elements(By.CSS_SELECTOR,'.trip-stop')
             for element,stop in zip(rows,trip['stops']):
-                assert (stop['name'] or stop['stop_id']) in element.text,(element.text,stop)
+                # Browsers collapse HTML whitespace (e.g. ATP's 'Via  Baldedda'); compare normalized text.
+                assert ' '.join((stop['name'] or stop['stop_id']).split()) in ' '.join(element.text.split()),(element.text,stop)
                 for key,label in [('arrival_sec','Arr'),('departure_sec','Dep')]:
                     seconds=stop[key]+offset if stop[key] is not None else None
                     assert f'{label} {clock(seconds)}' in element.text,(element.text,stop)
@@ -91,12 +92,14 @@ def main():
         route_search=driver.find_element(By.CSS_SELECTOR,'input[aria-label="Search routes"]')
         route_search.send_keys('atp_sassari')
         until(driver,lambda d:len(d.find_elements(By.CSS_SELECTOR,'.route-item'))==46 and all('atp_sassari' in e.text for e in d.find_elements(By.CSS_SELECTOR,'.route-item')),'route search scoped to ATP')
-        route_search.clear()
+        set_input(driver,route_search,'')
+        until(driver,lambda d:len(d.find_elements(By.CSS_SELECTOR,'.route-item'))>46,'route search cleared')
         stop_search=driver.find_element(By.CSS_SELECTOR,'input[aria-label="Search stops"]');stop_search.send_keys('Olbia')
         until(driver,lambda d:len(d.find_elements(By.CSS_SELECTOR,'.stop-result'))>0,'imported Olbia stop search')
         driver.find_element(By.CSS_SELECTOR,'.stop-result').click()
         until(driver,lambda d:len(d.find_elements(By.CSS_SELECTOR,'.inspector .inspect-label'))>0 and d.find_element(By.CSS_SELECTOR,'.inspector .inspect-label').text=='STOP','searched stop inspection')
-        stop_search.clear()
+        set_input(driver,stop_search,'')
+        until(driver,lambda d:not d.find_elements(By.CSS_SELECTOR,'.stop-result'),'stop search cleared')
         checkbox=driver.find_element(By.CSS_SELECTOR,'input[aria-label="Show atp_sassari"]');checkbox.click()
         hidden=ready(driver,'2026-11-06',SOURCES-{'atp_sassari'})
         until(driver,lambda d:'atp_sassari' not in inspect(d)['network']['renderedSourceIds'],'hidden operator absent from rendered lines')
@@ -113,7 +116,8 @@ def main():
         twarning=add_rule(driver,'/timetable','warning','2026-11-09')
         set_date(driver,'2026-11-09');ready(driver,'2026-11-09',{'trenitalia_sardegna'})
         until(driver,lambda d:'Injected incomplete geometry' in d.find_element(By.TAG_NAME,'body').text,'incomplete geometry warning')
-        driver.find_element(By.CSS_SELECTOR,'.route-item').click()
+        # ready() covers map sources only; the date's route catalog loads independently.
+        until(driver,lambda d:d.find_elements(By.CSS_SELECTOR,'.route-item'),'route catalog for warning date')[0].click()
         until(driver,lambda d:'Direction/variant filters apply to this loaded subset' in d.find_element(By.CSS_SELECTOR,'.inspector').text,'timetable truncation warning')
         report['warning_screenshot']=screenshot(driver,'incomplete-and-truncated-warning')
         disable(driver,warning,twarning)
