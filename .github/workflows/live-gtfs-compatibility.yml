@@ -7,15 +7,21 @@ on:
       - "scripts/check_sardinia_live.py"
       - ".github/workflows/live-gtfs-compatibility.yml"
   workflow_dispatch:
+    inputs:
+      sources:
+        description: "Comma-separated source IDs (include arst for full-region validation)"
+        required: false
+        type: string
+        default: "aspo,atp_sassari,trenitalia_sardegna"
 permissions:
   contents: read
   pull-requests: write
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 18
     env:
-      TRANSPORT_ATLAS_LIVE_SOURCES: "arst,aspo,atp_sassari,trenitalia_sardegna"
+      TRANSPORT_ATLAS_LIVE_SOURCES: ${{ inputs.sources || 'aspo,atp_sassari,trenitalia_sardegna' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
