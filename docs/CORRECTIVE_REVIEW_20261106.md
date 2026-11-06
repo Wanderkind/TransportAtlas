@@ -68,6 +68,55 @@ green. The branch is reviewable, but merging remains the user's decision and
 was not done. Remaining limitations are P2 latency (active stops, uncached
 regional geometry) and the existing Starlette/httpx and bundle-size warnings.
 
+## November 7 (overnight) — measured latency fixes
+
+Three changes, each found by profiling and each verified output-identical:
+
+1. **Failed optional import on every query.** DuckDB 1.5.6's Python client tries
+   `import pandas` on each `execute`. Pandas is not installed, and Python does
+   not cache failed imports, so every query rescanned `sys.path` under the
+   global import lock. One active-stops request spent about 1.8 s in 534 such
+   probes, and concurrent requests serialized on the lock (12–19 s outliers).
+   `storage.connect` now records known-absent pandas as `sys.modules['pandas']
+   = None` (`test_duckdb_import_overhead.py`; red before, green after).
+2. **Pure-Python simplification dominated uncached geometry** (about 54 of 60 s).
+   `simplify_line` was rewritten with flat coordinate lists and branched
+   clamping. It returns identical points: the oracle test
+   `test_phase3_simplify.py` compares it with the original at every display
+   level, and all 17 existing on-disk network views were regenerated
+   byte-identical. Coarser budget levels are memoized per immutable snapshot shape.
+3. **Restarts discarded that work.** `shape_store.py` persists simplified levels
+   per snapshot under `data/cache/shapes/`, validated by snapshot id, archive
+   SHA-256, format and algorithm version; corrupt or stale files are ignored.
+   Later builds write small delta files off-request and compaction happens on
+   load, so no build rewrites the 34 MB ARST document
+   (`test_phase3_shape_store.py`).
+
+Measurements (curl/urllib; PowerShell `Invoke-WebRequest` adds seconds on
+multi-MB bodies and was discarded):
+
+| Measure | Before | After |
+|---|---:|---:|
+| Active stops, HTTP median (5 samples) | 4,291 ms | 420 ms |
+| Summary median | 444 ms | 142 ms |
+| Cached regional network median | 505 ms | 269 ms |
+| ASPO stop board median | 180 ms | 56 ms |
+| Uncached regional build, in-process | 102.8 s | 48.5 s, first ever; 0.9 s for later dates |
+| First uncached date after restart, HTTP | 47.8 s | 3.26 s; later dates 0.64–1.05 s |
+| Browser all-four readiness, warm | 7.71 s | 5.35 s |
+| Cached date change to new map (browser) | 5.21 s | 2.69 s |
+| Backend tests | 63.9 s | about 21 s |
+
+Run 4 (`verify-local-browser-20261107-run4.log`, shape store active): 80
+tests, startup 4.81 s, all-four smoke readiness 5.47 s, race baseline 3.34 s,
+cached date change 1.55 s, no JavaScript errors.
+
+Evidence: `after-http.json`, `after-import-fix-http.json` and the run3/run4
+verification logs. The five-second browser target is now met for warm
+all-four readiness and cached date changes in these runs. It is **not** met
+for the very first regional build on an empty shape store (about a minute,
+once). A single headless sample is not a robust percentile.
+
 ---
 
 ## Historical record: paused checkpoint (November 6–7)

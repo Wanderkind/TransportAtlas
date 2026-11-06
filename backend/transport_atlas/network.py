@@ -12,6 +12,8 @@ from .storage import rows
 from .schedule import active_services, active_snapshots
 from .provenance import declared_bounds
 
+SHAPE_CACHE_LIMIT = 8192
+
 COVERAGE_KEYS = ('total_route_records','routes_with_trip_references','active_routes',
                  'eligible_routes','rendered_routes','routes_without_trip_references',
                  'routes_with_insufficient_geometry','routes_omitted_by_limits',
@@ -47,38 +49,67 @@ def _chunks(items, size=250):
 
 
 def simplify_line(points, tolerance=0.0001):
-    """Douglas–Peucker in coordinate degrees; preserve endpoints and major bends."""
+    """Douglas–Peucker in coordinate degrees; preserve endpoints and major bends.
+
+    A radial pass first removes dense samples within half the tolerance; the
+    remaining half bounds the Douglas–Peucker deviation. Coordinates are read
+    from flat lists and the projection clamp is branched, which returns exactly
+    the same points as the original min/max formulation with fewer calls.
+    """
     if tolerance <= 0 or len(points) <= 2:
         return points
-    # A linear radial pass removes dense samples before the more costly DP pass.
-    # Split the error budget so the combined deviation stays within tolerance.
-    radial = [points[0]]
     threshold = (tolerance/2)**2
-    for point in points[1:-1]:
-        if (point[0]-radial[-1][0])**2+(point[1]-radial[-1][1])**2 >= threshold:
-            radial.append(point)
-    radial.append(points[-1])
+    last = points[0]
+    lx, ly = last[0], last[1]
+    radial = [last]
+    append = radial.append
+    for index in range(1, len(points)-1):
+        point = points[index]
+        x, y = point[0], point[1]
+        if (x-lx)**2+(y-ly)**2 >= threshold:
+            append(point)
+            lx, ly = x, y
+    append(points[-1])
     points = radial
     tolerance /= 2
-    keep = {0, len(points)-1}
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    keep = [False]*len(points)
+    keep[0] = keep[-1] = True
+    limit = tolerance*tolerance
     stack = [(0, len(points)-1)]
+    pop, push = stack.pop, stack.append
     while stack:
-        start, end = stack.pop()
-        ax, ay = points[start]
-        bx, by = points[end]
-        dx, dy = bx-ax, by-ay
+        start, end = pop()
+        ax, ay = xs[start], ys[start]
+        dx, dy = xs[end]-ax, ys[end]-ay
         length = dx*dx+dy*dy
-        greatest, index = tolerance*tolerance, None
-        for i in range(start+1, end):
-            px, py = points[i]
-            t = max(0, min(1, ((px-ax)*dx+(py-ay)*dy)/length)) if length else 0
-            distance = (px-ax-t*dx)**2+(py-ay-t*dy)**2
-            if distance > greatest:
-                greatest, index = distance, i
-        if index is not None:
-            keep.add(index)
-            stack.extend(((start, index), (index, end)))
-    return [points[i] for i in sorted(keep)]
+        greatest, index = limit, -1
+        if length:
+            for i in range(start+1, end):
+                px = xs[i]-ax
+                py = ys[i]-ay
+                t = (px*dx+py*dy)/length
+                if t <= 0:
+                    distance = px**2+py**2
+                elif t >= 1:
+                    distance = (px-dx)**2+(py-dy)**2
+                else:
+                    distance = (px-t*dx)**2+(py-t*dy)**2
+                if distance > greatest:
+                    greatest, index = distance, i
+        else:
+            for i in range(start+1, end):
+                px = xs[i]-ax
+                py = ys[i]-ay
+                distance = px**2+py**2
+                if distance > greatest:
+                    greatest, index = distance, i
+        if index >= 0:
+            keep[index] = True
+            push((start, index))
+            push((index, end))
+    return [p for p, k in zip(points, keep) if k]
 
 
 def network_geometry(con, service_day: date, *, source_id: str | None = None,
@@ -177,9 +208,9 @@ def network_geometry(con, service_day: date, *, source_id: str | None = None,
             original_points += original_count
             shape_points[shape] = simplify_line(shape_points[shape])
             if shape_cache is not None:
-                if len(shape_cache) >= 8192:
+                if len(shape_cache) >= SHAPE_CACHE_LIMIT:
                     shape_cache.pop(next(iter(shape_cache)))
-                shape_cache[(sid, shape)] = (original_count, shape_points[shape])
+                shape_cache[(sid, shape)] = (original_count, shape_points[shape], {})
         # Preserve every distinct schematic stop sequence, not just one per route.
         # Multiple trips with the same shape are never rendered repeatedly.
         schematic_trip_ids: set[str] = set()
@@ -247,7 +278,11 @@ def network_geometry(con, service_day: date, *, source_id: str | None = None,
         tolerance *= 2
         used_points = 0
         for feature, original in zip(features, originals):
-            coords = simplify_line(original, tolerance) if feature['properties']['quality']=='source-shape' else original
+            properties = feature['properties']
+            if properties['quality']=='source-shape':
+                coords = _coarser(shape_cache, properties['snapshot_id'], properties['shape_id'], original, tolerance)
+            else:
+                coords = original
             feature['geometry']['coordinates'] = coords
             used_points += len(coords)
         if used_points == minimum_points:
@@ -304,6 +339,24 @@ def network_geometry(con, service_day: date, *, source_id: str | None = None,
                          'missing_geometry_routes': missing_geometries,
                          'snapshots': snap_details,
                          'warning': ' '.join(warnings) if warnings else None}}
+
+
+def _coarser(shape_cache, snapshot_id, shape_id, base, tolerance):
+    """Re-simplify a base-tolerance shape, memoized per immutable snapshot shape.
+
+    Snapshot shapes never change, so the coarser display levels chosen by the
+    point budget are reusable across dates and filters within a process.
+    """
+    if shape_cache is None or shape_id is None:
+        return simplify_line(base, tolerance)
+    entry = shape_cache.get((snapshot_id, shape_id))
+    if entry is None or entry[1] is not base:
+        return simplify_line(base, tolerance)
+    levels = entry[2]
+    coords = levels.get(tolerance)
+    if coords is None:
+        coords = levels[tolerance] = simplify_line(base, tolerance)
+    return coords
 
 
 def _feature(snapshot_id, source_id, route_id, route_type, mode, coordinates, quality, shape_id):

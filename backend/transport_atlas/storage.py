@@ -1,6 +1,8 @@
 """Portable SQL subset so SQLite can run offline tests; DuckDB is default in production."""
 from __future__ import annotations
+import importlib.util
 import os
+import sys
 import sqlite3
 import csv
 import re
@@ -80,6 +82,20 @@ CREATE TABLE IF NOT EXISTS qa_issues (
 );
 """
 
+def _cache_absent_optional_modules():
+    """Make DuckDB's per-execute optional imports fail fast when not installed.
+
+    The DuckDB Python client attempts ``import pandas`` on every ``execute``.
+    Python does not cache failed imports, so without pandas each query rescans
+    ``sys.path`` under the global import lock (milliseconds per query, and it
+    serializes concurrent requests). A ``None`` entry in ``sys.modules`` is the
+    standard marker for "known absent"; installed packages are left untouched.
+    """
+    for name in ('pandas',):
+        if name not in sys.modules and importlib.util.find_spec(name) is None:
+            sys.modules[name] = None
+
+
 def connect(db_path: str | Path, backend: str | None = None):
     backend = backend or os.environ.get("TRANSPORT_ATLAS_DB_BACKEND", "duckdb")
     path = Path(db_path)
@@ -89,6 +105,7 @@ def connect(db_path: str | Path, backend: str | None = None):
             import duckdb
         except ImportError as exc:
             raise RuntimeError("DuckDB not installed. Install project dependencies, or set TRANSPORT_ATLAS_DB_BACKEND=sqlite for offline tests.") from exc
+        _cache_absent_optional_modules()
         con = duckdb.connect(str(path))
     elif backend == "sqlite":
         con = sqlite3.connect(str(path), check_same_thread=False)

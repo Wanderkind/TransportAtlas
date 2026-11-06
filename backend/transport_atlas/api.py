@@ -5,13 +5,14 @@ from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 from functools import lru_cache
-from threading import Lock
+from threading import Lock, Thread
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, JSONResponse
 from .storage import connect, rows, one
 from .schedule import daily_summary, stop_board, trip_stop_times, active_services, active_snapshots
-from .network import network_geometry, MODE_TYPES
+from .network import network_geometry, MODE_TYPES, SHAPE_CACHE_LIMIT
+from . import shape_store
 from .timetable import route_timetable
 from .provenance import declared_info
 from .network_cache import cache_key, read_cache, write_cache
@@ -27,7 +28,15 @@ def create_app(db_path: str | Path | None = None,backend: str | None = None):
         finally: app.state.con.close()
     app=FastAPI(title='Transport Atlas',version='0.1.0',lifespan=lifespan)
     shape_cache = {}
+    hydrated = set()
     geometry_lock = Lock()
+    shape_write_lock = Lock()
+
+    def write_shape_levels(folder, documents):
+        # Serializing tens of MB must not delay the geometry response.
+        with shape_write_lock:
+            for name, document in documents:
+                shape_store.write(folder/name, document)
 
     @lru_cache(maxsize=16)
     def cached_network(selection, day, mode, source, sources, active_only, max_routes, max_points):
@@ -42,10 +51,27 @@ def create_app(db_path: str | Path | None = None,backend: str | None = None):
             existing = read_cache(folder,key)
             if existing is not None:
                 return existing
+            # Reuse simplified shape levels persisted for these immutable snapshots.
+            shape_folder = target.parent/'cache'/'shapes'
+            involved = [s for s in active_snapshots(app.state.con)
+                        if (not source or s['source_id'] == source)
+                        and (sources is None or s['source_id'] in sources.split(','))]
+            before = {}
+            for snapshot in involved:
+                if snapshot['snapshot_id'] in hydrated:
+                    before[snapshot['snapshot_id']] = shape_store.inventory(shape_cache, snapshot['snapshot_id'])
+                else:
+                    before[snapshot['snapshot_id']] = shape_store.hydrate(shape_cache, shape_folder, snapshot, limit=SHAPE_CACHE_LIMIT)
+                    hydrated.add(snapshot['snapshot_id'])
             geometry = network_geometry(app.state.con, day, source_id=source,
                                 source_ids=set(sources.split(',')) if sources is not None else None,
                                 shape_cache=shape_cache, mode=mode, active_only=active_only,
                                 max_routes=max_routes, max_points=max_points)
+            documents = [d for d in (shape_store.capture(shape_cache, snapshot, before[snapshot['snapshot_id']])
+                                     for snapshot in involved) if d is not None]
+            if documents:
+                Thread(target=write_shape_levels, args=(shape_folder, documents), daemon=True,
+                       name='shape-level-cache-writer').start()
             return write_cache(folder, key, geometry)
     app.add_middleware(CORSMiddleware,allow_origins=['http://127.0.0.1:5173','http://localhost:5173'],allow_credentials=False,allow_methods=['GET'],allow_headers=['*'])
 

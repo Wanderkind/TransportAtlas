@@ -199,13 +199,15 @@ The older `scripts/smoke_ui.py` expects the fictional fixture and an isolated de
 | `data/local-verification/` | Count/calendar evidence, timings and screenshots |
 | `data/local-verification/phase3/services/<run>/` | Unique backend/frontend launch logs |
 | `data/cache/network/` | Disposable, snapshot/filter-keyed serialized GeoJSON |
+| `data/cache/shapes/` | Disposable per-snapshot simplified shape levels (`<id>.json` + small `--` deltas) |
 | `.venv/`, `frontend/node_modules/`, `frontend/dist/` | Local environment/builds |
 
 These paths are ignored by Git. Only synthetic test ZIPs belong in the repository.
 Map responses are cached in memory and on disk; selection and filter changes use
-different keys. Invalid cache files are rebuilt. An uncached regional geometry
-request can still take tens of seconds; repeat requests and restarts reuse cached
-responses. Cache files can be removed while services are stopped to force rebuilding.
+different keys. Invalid cache files are rebuilt. Simplified shape levels are also
+stored per immutable snapshot, so after the very first regional build (about a
+minute) a new date usually builds in a few seconds, even after a restart. Cache
+files can be removed while services are stopped to force rebuilding.
 The application uses bounded GeoJSON, not national vector tiles. External
 MobilityData validation, full pagination, historical selection UI, exports,
 physical-stop matching, connectivity/accessibility analysis and multi-country

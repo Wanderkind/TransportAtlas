@@ -9,6 +9,12 @@ latency (active stops; uncached regional geometry) and P3 milestones. No merge,
 PR, deployment or remote CI was performed; integration is the user's decision.
 The original checkpoint text follows for history.
 
+**Overnight update:** P2 latency was profiled and reduced. Active stops went
+from about 4.3 s to 0.42 s; a new date after a restart went from about 48 s to
+about 3 s. The changes were a DuckDB failed-import fix, an output-identical
+faster simplifier and a persistent per-snapshot shape store. See the
+corrective review section "measured latency fixes".
+
 ## Original checkpoint (before resolution)
 
 Checkpoint: November 7, 2026 (Asia/Seoul).
