@@ -105,9 +105,10 @@ function App(){
  const searching=searchRequest.status==='loading';
  const listWarning=routeRequest.data?.warning,stopWarning=stopRequest.data?.warning;
  const error=[snapshotRequest.error&&`Catalog: ${snapshotRequest.error}`,networkRequest.error&&`Network unavailable; previous geometry hidden. ${networkRequest.error}`,stopRequest.error&&`Stop markers unavailable; previous markers hidden. ${stopRequest.error}`,routeRequest.error,summaryRequest.error,searchRequest.error].filter(Boolean).join(' ');
- const [selection,setSelection]=useState<{context:string;route:Route|null;stop:Stop|null}>({context:'',route:null,stop:null});
+ const [selection,setSelection]=useState<{context:string;route:Route|null;stop:Stop|null;source?:Snapshot|null}>({context:'',route:null,stop:null});
  const selectedRoute=selection.context===filterKey&&selection.route?routes.find(r=>key(r)===key(selection.route!)&&modeMatches(r.route_type,mode)&&sourceIds.split(',').includes(r.source_id)&&(!activeOnly||r.active_on_date))??null:null;
  const selectedStop=selection.context===filterKey?selection.stop:null;
+ const selectedSource=selection.context===filterKey&&selection.source?snapshots.find(s=>s.snapshot_id===selection.source!.snapshot_id)??null:null;
  const timetableRequest=useKeyedRequest<RouteTimetable>(selectedRoute?endpoints.timetable(selectedRoute,date):null,`${filterKey}|route|${selectedRoute?key(selectedRoute):''}`);
  const boardRequest=useKeyedRequest<StopBoard>(selectedStop?endpoints.board(selectedStop,date):null,`${filterKey}|stop|${selectedStop?.snapshot_id}:${selectedStop?.stop_id}`);
  const timetable=timetableRequest.data,board=boardRequest.data;
@@ -122,6 +123,7 @@ function App(){
  const scopeRef=useRef(filterKey);scopeRef.current=filterKey;
  const chooseRoute=useCallback((route:Route)=>setSelection({context:scopeRef.current,route,stop:null}),[]);
  const chooseStop=useCallback((stop:Stop)=>setSelection({context:scopeRef.current,route:null,stop}),[]);
+ const chooseSource=useCallback((source:Snapshot)=>setSelection({context:scopeRef.current,route:null,stop:null,source}),[]);
  const filtersRef=useRef({mode,source,hiddenSources,activeOnly});filtersRef.current={mode,source,hiddenSources,activeOnly};
  const chooseRouteId=useCallback((snapshot:string,routeId:string)=>{
    // Only routes the current filters can display may be selected.
@@ -214,7 +216,7 @@ function App(){
       <small title={r.long_name}>{r.long_name||'Untitled route'}</small><em>{r.source_id}</em></span>
       <span className={'status-dot '+(r.active_on_date?'on':'off')} title={r.active_on_date?'Active':'Inactive on date'}/></button>):<p className="empty">No matching routes. Import GTFS or adjust the filters.</p>}</div>
     <div className="stop-search"><label className="search"><Search size={16}/><input aria-label="Search stops" placeholder="Find stop name or ID…" value={stopSearch} onChange={e=>setStopSearch(e.target.value)}/></label>
-      {stopSearch&&<div className="stop-results">{matchingStops.slice(0,40).map(s=><button className="stop-result" type="button" key={s.snapshot_id+s.stop_id} onClick={()=>{chooseStop(s);map.current?.easeTo({center:[s.lon,s.lat],zoom:13})}}>{s.name} <small>{s.source_id}</small></button>)}{matchingStops.length>40&&<p>Showing 40 of {matchingStops.length}; refine search.</p>}{searching?<p role="status">Searching current stops…</p>:!matchingStops.length&&<p>No matching imported stops.</p>}{searchRequest.data?.warning&&<p role="alert">{searchRequest.data.warning}</p>}</div>}</div>
+      {stopSearch&&<div className="stop-results">{matchingStops.slice(0,40).map(s=><button className="stop-result" type="button" key={s.snapshot_id+s.stop_id} data-stop-id={s.stop_id} data-source-id={s.source_id} onClick={()=>{chooseStop(s);map.current?.easeTo({center:[s.lon,s.lat],zoom:13})}}>{s.name} <small>{s.source_id}</small></button>)}{matchingStops.length>40&&<p>Showing 40 of {matchingStops.length}; refine search.</p>}{searching?<p role="status">Searching current stops…</p>:!matchingStops.length&&<p>No matching imported stops.</p>}{searchRequest.data?.warning&&<p role="alert">{searchRequest.data.warning}</p>}</div>}</div>
     <footer className="sidebar-footer"><Database size={14}/> {snapshots.length} selected source snapshots</footer>
    </aside>
    <main className="main-panel"><div className="metrics"><div><span>OPERATING ROUTES</span><strong>{counts?.routes??'—'}</strong></div>
@@ -238,11 +240,11 @@ function App(){
         <span><i style={{background:'#da7933'}}/>Tram</span><span><i style={{background:'#229a90'}}/>Ferry</span><span>Schematic links dashed</span></div>
      </div>
      <div className="bottom"><div className="bottom-title"><Clock3 size={16}/> Service coverage by source</div>
-       <div className="source-strip">{summary?.snapshots.filter(s=>(!source||s.source_id===source)&&!hiddenSources.includes(s.source_id)).map(s=><div className="source-row" key={s.snapshot_id}>
+       <div className="source-strip">{summary?.snapshots.filter(s=>(!source||s.source_id===source)&&!hiddenSources.includes(s.source_id)).map(s=>{const snap=snapshots.find(x=>x.snapshot_id===s.snapshot_id);return <button type="button" className={'source-row'+(selectedSource?.snapshot_id===s.snapshot_id?' selected':'')} key={s.snapshot_id} data-source-id={s.source_id} title="Inspect source freshness and data quality" disabled={!snap} onClick={()=>{if(snap)chooseSource(snap)}}>
          <strong>{s.source_id}</strong><span>{s.active_route_records} active routes</span><span>{s.scheduled_trip_instances} scheduled trips</span>
-         <small>{s.feed_start}–{s.feed_end}</small></div>)}{!summary?.snapshots.length&&<span className="muted">No imported feeds. See README for an import command.</span>}</div></div>
+         <small>Calendars {s.feed_start}–{s.feed_end}</small></button>})}{!summary?.snapshots.length&&<span className="muted">No imported feeds. See README for an import command.</span>}</div></div>
    </main>
-   <aside className="inspector" data-filter-key={filterKey}><Inspector key={`${filterKey}|${routeUid}|${selectedStop?`${selectedStop.snapshot_id}:${selectedStop.stop_id}`:''}`} route={selectedRoute} stop={selectedStop} date={date} timetable={timetable} board={board} timetableError={timetableRequest.error} boardError={boardRequest.error} snapshots={snapshots} onGeometry={setFocused} onDirection={setSelectedDirection} onStop={chooseStop} onRoute={chooseRouteId}/></aside>
+   <aside className="inspector" data-filter-key={filterKey}><Inspector key={`${filterKey}|${routeUid}|${selectedStop?`${selectedStop.snapshot_id}:${selectedStop.stop_id}`:''}|${selectedSource?.snapshot_id??''}`} route={selectedRoute} stop={selectedStop} source={selectedSource} date={date} timetable={timetable} board={board} timetableError={timetableRequest.error} boardError={boardRequest.error} snapshots={snapshots} onGeometry={setFocused} onDirection={setSelectedDirection} onStop={chooseStop} onRoute={chooseRouteId}/></aside>
   </div><div className="app-status">{loading?'Loading dataset…':networkLoading?'Loading geometry…':stopLoading?'Loading current stops…':renderedKey!==filterKey&&networkRequest.status==='ready'?'Drawing current network…':`Showing ${visibleNetwork.features.length} route alignments`} · {searching?'Searching stops…':''} ·
     {basemap==='streets'?' Online basemap requires internet':' Offline plain map'} · Imported data may be incomplete or expired.</div>
  </div>

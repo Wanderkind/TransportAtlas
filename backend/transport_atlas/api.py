@@ -15,6 +15,7 @@ from .network import network_geometry, MODE_TYPES, SHAPE_CACHE_LIMIT
 from . import shape_store
 from .timetable import route_timetable
 from .nearby import nearby_stops, stop_routes
+from . import quality
 from .provenance import declared_info
 from .network_cache import cache_key, read_cache, write_cache
 
@@ -201,9 +202,51 @@ def create_app(db_path: str | Path | None = None,backend: str | None = None):
 
     @app.get('/api/v1/stop/{snapshot_id}/{stop_id}/nearby')
     def nearby(snapshot_id: str, stop_id: str, radius: float = Query(default=200, ge=10, le=1000),
-               limit: int = Query(default=30, ge=1, le=200)):
+               limit: int = Query(default=30, ge=1, le=200), date_value: date | None = Query(default=None, alias='date')):
         try:
-            return nearby_stops(app.state.con, snapshot_id, stop_id, radius_m=radius, limit=limit)
+            result = nearby_stops(app.state.con, snapshot_id, stop_id, radius_m=radius, limit=limit)
+        except KeyError:
+            raise HTTPException(status_code=404, detail='Stop not found')
+        if date_value is not None:
+            # Service status per source snapshot, for the origin and every listed record.
+            snapshots = {s['snapshot_id']: s for s in active_snapshots(app.state.con)}
+            wanted: dict[str, list[str]] = {}
+            for item in [{'snapshot_id': snapshot_id, 'stop_id': stop_id}, *result['stops']]:
+                wanted.setdefault(item['snapshot_id'], []).append(item['stop_id'])
+            status = {}
+            for sid, ids in wanted.items():
+                snap = snapshots.get(sid) or one(app.state.con, 'SELECT * FROM feed_snapshots WHERE snapshot_id=?', (sid,))
+                for stop, value in quality.stop_service_status(app.state.con, snap, ids, date_value).items():
+                    status[(sid, stop)] = value
+            result['origin']['service'] = status[(snapshot_id, stop_id)]
+            for item in result['stops']:
+                item['service'] = status[(item['snapshot_id'], item['stop_id'])]
+            result['service_date'] = date_value.isoformat()
+        return result
+
+    def snapshot_or_404(snapshot_id):
+        snap = one(app.state.con, 'SELECT * FROM feed_snapshots WHERE snapshot_id=?', (snapshot_id,))
+        if snap is None:
+            raise HTTPException(status_code=404, detail='Snapshot not found')
+        return snap
+
+    @app.get('/api/v1/quality/source/{snapshot_id}')
+    def source_quality(snapshot_id: str, date_value: date = Query(alias='date')):
+        return quality.source_quality(app.state.con, snapshot_or_404(snapshot_id), date_value,
+                                      validation_folder=target.parent/'local-verification'/'phase4-validator',
+                                      cache_folder=target.parent/'cache'/'quality')
+
+    @app.get('/api/v1/quality/route/{snapshot_id}/{route_id}')
+    def route_quality(snapshot_id: str, route_id: str):
+        try:
+            return quality.route_quality(app.state.con, snapshot_or_404(snapshot_id), route_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail='Route not found')
+
+    @app.get('/api/v1/quality/stop/{snapshot_id}/{stop_id}')
+    def stop_quality(snapshot_id: str, stop_id: str, date_value: date = Query(alias='date')):
+        try:
+            return quality.stop_quality(app.state.con, snapshot_or_404(snapshot_id), stop_id, date_value)
         except KeyError:
             raise HTTPException(status_code=404, detail='Stop not found')
 
@@ -222,8 +265,10 @@ def create_app(db_path: str | Path | None = None,backend: str | None = None):
 
     @app.get('/api/v1/trip/{snapshot_id}/{trip_id}')
     def trip(snapshot_id:str,trip_id:str):
-        try:return trip_stop_times(app.state.con,snapshot_id,trip_id)
+        try:result=trip_stop_times(app.state.con,snapshot_id,trip_id)
         except KeyError:raise HTTPException(status_code=404,detail='Trip not found')
+        result['timing']=quality.trip_timing(app.state.con,snapshot_id,trip_id,result['stops'])
+        return result
     return app
 
 app=create_app()

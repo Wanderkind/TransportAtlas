@@ -1,6 +1,9 @@
 # TransportAtlas — Phase 3 handoff
 
-## Current state — November 7, end of overnight session
+> **Historical record.** Superseded by Phase 4 (`PHASE4_EXTERNAL_GTFS_VALIDATION.md`)
+> and Phase 5 (`PHASE5_DATA_QUALITY.md`). Kept unchanged below as the state at that time.
+
+## State at the end of the November 7 overnight session
 
 Branch `codex/local-real-feed-atlas`, HEAD `baa3b77`, pushed with CI skipped.
 Not merged; no PR, deployment or remote CI. Integration is the user's decision.

@@ -166,6 +166,21 @@ physical-stop match, walking route or guaranteed transfer. It also lists the
 trip templates calling there on the selected service day; clicking one opens it
 when the current filters can display it.
 
+**Data-quality indicators** (Phase 5, [details](docs/PHASE5_DATA_QUALITY.md))
+appear in the route, stop and source inspectors, never on the map. Click a source
+under *Service coverage by source* to open the source inspector.
+- Nearby records show whether each is scheduled on the selected service day, has
+  trips on other days only, has no trip references at all, or has an unknown
+  status. Records without trips are listed, not hidden.
+- Route and trip views flag implausibly short or contradictory stop-to-stop times
+  as suspicious, using a conservative straight-line lower bound. Times are shown
+  exactly as published.
+- The source inspector shows these separately: the local retrieval time, the
+  publisher's version label, the declared validity, the calendar coverage and the
+  selected-date volume. It also shows the local validator result.
+- Endpoints: `/api/v1/quality/{source|route|stop}/...`; the trip response includes
+  `timing`, and nearby stops take an optional `date` parameter.
+
 ## Verify locally
 
 ```powershell
@@ -185,6 +200,7 @@ Individual checks:
 npm run build --prefix frontend
 .\.venv\Scripts\python.exe scripts/smoke_real_ui.py
 .\.venv\Scripts\python.exe scripts/smoke_filter_races.py
+.\.venv\Scripts\python.exe scripts/smoke_quality_ui.py
 ```
 
 Tests cover DuckDB, calendar exceptions, overnight/DST semantics, source isolation,
@@ -210,6 +226,8 @@ The older `scripts/smoke_ui.py` expects the fictional fixture and an isolated de
 | `data/local-verification/phase3/services/<run>/` | Unique backend/frontend launch logs |
 | `data/cache/network/` | Disposable, snapshot/filter-keyed serialized GeoJSON |
 | `data/cache/shapes/` | Disposable per-snapshot simplified shape levels (`<id>.json` + small `--` deltas) |
+| `data/cache/quality/` | Disposable per-snapshot feed-wide interval summaries (rule-versioned) |
+| `data/local-verification/phase4-validator/` | MobilityData validator reports (read by the source inspector) |
 | `.venv/`, `frontend/node_modules/`, `frontend/dist/` | Local environment/builds |
 
 These paths are ignored by Git. Only synthetic test ZIPs belong in the repository.
@@ -222,6 +240,7 @@ responses are pruned least-recently-used beyond 500 files or 1 GiB (override wit
 abandoned `.part` files older than an hour are removed. Cache files can be removed
 while services are stopped to force rebuilding.
 The application uses bounded GeoJSON, not national vector tiles. External
-MobilityData validation, stop-board pagination, historical selection UI, exports,
+MobilityData validation (Phase 4) and data-quality indicators (Phase 5) are done.
+Stop-board pagination, historical selection UI, exports,
 physical-stop matching, connectivity/accessibility analysis and multi-country
 validation remain future milestones. See the [MVP specification](docs/MVP_SPEC.md).

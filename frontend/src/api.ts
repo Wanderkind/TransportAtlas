@@ -4,7 +4,16 @@ export type Route = {snapshot_id:string; source_id:string; route_id:string; shor
 export type Stop = {snapshot_id:string; source_id:string; stop_id:string; name:string; lat:number; lon:number};
 export type Departure = {trip_id:string; route_short_name:string; service_date:string; gtfs_time:string; local_departure:string; headsign:string; boarding_allowed:boolean; precision:string};
 export type FreqWindow = {trip_id:string; start_local:string; end_local:string; headway_seconds:number};
-export type NearbyStops = {radius_m:number;stops:Array<Stop&{distance_m:number;same_source:boolean}>;total:number;truncated:boolean;note:string};
+export type ServiceStatus = {status:'scheduled'|'not_scheduled_on_date'|'no_trip_references'|'unknown';label:string;reason:string|null;trip_templates:number;active_trip_templates:number;exact_calls_on_date:number;frequency_templates_on_date:number;service_date:string;basis:string};
+export type NearbyStops = {radius_m:number;origin:{snapshot_id:string;stop_id:string;name:string;service?:ServiceStatus};stops:Array<Stop&{distance_m:number;same_source:boolean;service?:ServiceStatus}>;total:number;truncated:boolean;note:string;service_date?:string};
+export type QualityCategory = 'publisher'|'coverage'|'timing'|'geometry'|'validation';
+export type IntervalFinding = {classification:'implausible'|'inconsistent';reason:string;from_sequence:number;to_sequence:number;from_stop_id:string;to_stop_id:string;from_stop_name?:string|null;to_stop_name?:string|null;from_time:string|null;to_time:string|null;elapsed_seconds:number;straight_line_m?:number;timing_resolution_seconds?:number;min_implied_speed_kph?:number;threshold_kph?:number;trip_id?:string};
+export type Indicator = {category:QualityCategory;category_label:string;code:string;level:'info'|'caution';title:string;detail:string;evidence:{examples?:IntervalFinding[];[key:string]:unknown};source_id:string|null;snapshot_id:string|null};
+export type TripTiming = {segments_checked:number;segments_untimed:number;segments_without_coordinates:number;threshold_kph:number;distance_basis:string;frequency_based:boolean;findings:IntervalFinding[]};
+export type Freshness = {retrieved_at:string;retrieval_note:string;feed_info_present:boolean;publisher_name:string|null;feed_version:string|null;version_label_date:string|null;publication_date:null;publication_note:string;declared_start:string|null;declared_end:string|null;observed_start:string|null;observed_end:string|null;service_date:string;in_observed_coverage:boolean;in_declared_validity:boolean|null;trip_templates_on_date:number|null;busiest_same_weekday:{date:string;trip_templates:number}|null};
+export type SourceQuality = {snapshot_id:string;source_id:string;freshness:Freshness;indicators:Indicator[]};
+export type RouteQuality = {snapshot_id:string;route_id:string;indicators:Indicator[]};
+export type StopQuality = {snapshot_id:string;stop_id:string;service:ServiceStatus;indicators:Indicator[]};
 export type StopRoutes = {routes:Array<{snapshot_id:string;route_id:string;short_name:string|null;long_name:string|null;route_type:number;mode:string;trip_templates:number;calls_on_date:number}>;note:string};
 export type StopBoard = {stop:Stop; wall_date:string; departures:Departure[]; frequency_windows:FreqWindow[]; warning:string};
 export type NetworkFeature = {type:'Feature'; properties:{snapshot_id:string;source_id:string;route_id:string;uid:string;route_type:number;mode:string;color:string;quality:string};geometry:{type:'LineString';coordinates:number[][]}};
@@ -15,7 +24,7 @@ export type TimetableWindow = {trip_id:string;variant_id:string;direction_id:num
 export type Variant = {variant_id:string;direction_id:number|null;shape_id:string|null;representative_trip_id:string;headsign:string;stops:Array<{stop_id:string;name:string}>;scheduled_departures:number;first_departure:string|null;last_departure:string|null;median_interval_minutes:number|null;frequency_windows:number};
 export type Provenance = Snapshot & {publisher:string;landing_url:string;download_url:string|null;license_name:string|null};
 export type RouteTimetable = {total_departures:number;matching_departures?:number;offset?:number;next_offset?:number|null;departures:TimetableTrip[];truncated:boolean;frequency_windows:TimetableWindow[];windows_truncated:boolean;note:string;first_departure:string|null;last_departure:string|null;variants:Variant[];provenance:Provenance;calendars:Array<Record<string,string|number>>;exceptions:Array<{service_id:string;service_date:string;exception_type:number}>;warnings:Array<{issue_code:string;count:number}>};
-export type TripDetail = {trip:{trip_id:string;shape_id:string|null};stops:Array<{stop_id:string;stop_sequence:number;name:string;arrival_sec:number|null;departure_sec:number|null;pickup_type:number;drop_off_type:number;timepoint:number|null;lat:number;lon:number}>;geometry:NetworkGeometry};
+export type TripDetail = {trip:{trip_id:string;shape_id:string|null};stops:Array<{stop_id:string;stop_sequence:number;name:string;arrival_sec:number|null;departure_sec:number|null;pickup_type:number;drop_off_type:number;timepoint:number|null;lat:number;lon:number}>;geometry:NetworkGeometry;timing?:TripTiming};
 
 export async function getJSON<T>(url:string, signal?:AbortSignal):Promise<T>{
  const result=await fetch(url,{signal});
@@ -29,7 +38,10 @@ export const endpoints={
  routes:(d:string)=>`/api/v1/routes?date=${q(d)}`,
  stops:(d:string,m:string,active:boolean,sources?:string,search?:string)=>`/api/v1/stops?limit=20000&date=${q(d)}&mode=${q(m)}&active_only=${active}${sources!==undefined?`&sources=${q(sources)}`:''}${search?`&search=${q(search)}`:''}`,
  network:(d:string,m:string,s:string,active:boolean,sources?:string)=>`/api/v1/network/geometry?date=${q(d)}&mode=${q(m)}&active_only=${active}${s?`&source=${q(s)}`:''}${sources!==undefined?`&sources=${q(sources)}`:''}`,
- nearby:(s:Stop,radius=200)=>`/api/v1/stop/${q(s.snapshot_id)}/${q(s.stop_id)}/nearby?radius=${radius}`,
+ nearby:(s:Stop,d:string,radius=200)=>`/api/v1/stop/${q(s.snapshot_id)}/${q(s.stop_id)}/nearby?radius=${radius}&date=${q(d)}`,
+ sourceQuality:(snapshot:string,d:string)=>`/api/v1/quality/source/${q(snapshot)}?date=${q(d)}`,
+ routeQuality:(r:Route)=>`/api/v1/quality/route/${q(r.snapshot_id)}/${q(r.route_id)}`,
+ stopQuality:(s:Stop,d:string)=>`/api/v1/quality/stop/${q(s.snapshot_id)}/${q(s.stop_id)}?date=${q(d)}`,
  stopRoutes:(s:Stop,d:string)=>`/api/v1/stop/${q(s.snapshot_id)}/${q(s.stop_id)}/routes?date=${q(d)}`,
  board:(s:Stop,d:string)=>`/api/v1/stop/${q(s.snapshot_id)}/${q(s.stop_id)}/departures?date=${q(d)}`,
  timetable:(r:Route,d:string)=>`/api/v1/route/${q(r.snapshot_id)}/${q(r.route_id)}/timetable?date=${q(d)}&limit=200`,

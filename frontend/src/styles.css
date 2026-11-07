@@ -20,3 +20,13 @@
 .load-more{width:100%;margin:8px 0;padding:8px 10px;border:1px solid #c9d6de;border-radius:8px;background:#f5f9fb;color:#1d6489;font-weight:600;cursor:pointer}
 .load-more:disabled{opacity:.6;cursor:progress}
 .nearby,.stop-routes{margin:6px 0 10px;font-size:12px;color:#5f7080}.nearby summary,.stop-routes summary{cursor:pointer;font-weight:600;color:#29445d}.nearby-stop,.stop-route{display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;padding:7px 2px;border:0;border-bottom:1px solid #edf0f2;background:none;font-size:12px}.nearby-stop span,.stop-route span{display:flex;flex-direction:column}.nearby-stop small,.stop-route small{color:#9ca8b2}.nearby-stop strong,.stop-route strong{color:#2a628d;font-size:11px}
+/* Phase 5 data-quality indicators: restrained, inspector-only, never on the map. */
+.quality{margin:8px 0 12px;display:flex;flex-direction:column;gap:8px}.quality-group{display:flex;flex-direction:column;gap:5px}.quality-category{font-size:9px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;color:#8495a5}
+.quality-item{border-left:3px solid #c9d3db;background:#f6f8fa;border-radius:0 6px 6px 0;padding:7px 9px;font-size:11px;color:#4f6274}.quality-item.caution{border-left-color:#d39a4f;background:#fdf7ef}
+.quality-item strong{display:block;font-size:11px;color:#34495c}.inspector .quality-item p{margin:3px 0;font-size:11px;line-height:1.5;color:#5f7080}.quality-item small{color:#93a1ad;font-size:10px}.quality-examples{margin:3px 0 3px 14px;padding:0;font-size:10px;color:#6c7d8d}
+.inspector p.trip-timing{border-left:3px solid #d39a4f;line-height:1.5}
+.trip-stop.flagged{background:#fdf7ef}.trip-stop small.interval-flag{color:#9b6530}
+.service-status{font-style:normal;font-size:10px;margin-top:2px}.service-status.scheduled{color:#2f8a63}.service-status.not_scheduled_on_date{color:#7b8a98}.service-status.no_trip_references{color:#9b6530}.service-status.unknown{color:#7b6aa8}
+.inspector p.stop-service{margin:4px 0;font-size:11px;color:#4f6274}.nearby-tally{font-size:10px}
+.freshness{width:100%;border-collapse:collapse;font-size:11px;margin:6px 0}.freshness th{text-align:left;font-weight:600;color:#5f7080;vertical-align:top;padding:4px 6px 4px 0;width:38%}.freshness td{padding:4px 0;color:#34495c;overflow-wrap:anywhere}.freshness td small{display:block;color:#93a1ad;font-size:10px}.freshness tr{border-bottom:1px solid #edf0f2}
+button.source-row{background:white;cursor:pointer;font:inherit;font-size:10px}button.source-row:hover,button.source-row.selected{background:#eef6fb;border-color:#b9d3e6}

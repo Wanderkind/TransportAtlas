@@ -19,6 +19,15 @@ def declared_info(raw_zip_path, checksum):
     return {}
 
 
+@lru_cache(maxsize=128)
+def feed_info_present(raw_zip_path, checksum):
+    """Whether the archive contains feed_info.txt (distinct from an empty one)."""
+    if not Path(raw_zip_path).exists():
+        return False
+    with ZipFile(raw_zip_path) as z:
+        return any(n.lower() == 'feed_info.txt' for n in z.namelist())
+
+
 def declared_bounds(snapshot):
     info = declared_info(snapshot['raw_zip_path'], snapshot['content_sha256'])
     bounds = []

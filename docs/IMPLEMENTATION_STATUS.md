@@ -1,6 +1,19 @@
 # Implementation status — Windows local development, 2026-11-07
 
-## Current: Phase 3 corrective stabilization
+## Current: Phase 5 data-quality indicators
+
+Phase 5 (local commits on `codex/local-real-feed-atlas`, not pushed) adds
+source-backed data-quality indicators without changing provider data, schemas
+or the map: nearby-stop service status, implausible stop-to-stop interval
+warnings, and a source inspector that separates retrieval, version label,
+declared validity, calendar coverage and selected-date service. External
+validation results are shown with the caveat that zero ERROR notices is not
+schedule accuracy. Details, rules, evidence and false-positive risks:
+[PHASE5_DATA_QUALITY.md](PHASE5_DATA_QUALITY.md). Phase 4 (external MobilityData
+validation, 0 ERROR notices in all four feeds) is recorded in
+[PHASE4_EXTERNAL_GTFS_VALIDATION.md](PHASE4_EXTERNAL_GTFS_VALIDATION.md).
+
+## Historical: Phase 3 corrective stabilization
 
 **State at end of November 7 overnight session** (HEAD `baa3b77`, pushed, not
 merged): the full local workflow passes (91 tests, both browser suites). Added
@@ -12,9 +25,9 @@ nearby stop records and routes serving a stop. See the
 now gated on data identity (`frontend/src/sourceGate.ts`) instead of
 `isSourceLoaded`, which crashed or livelocked. Both browser suites and the
 complete `verify_local.ps1 -Browser` workflow pass locally, and after-change
-HTTP and browser timings are recorded. The five-second target is not met;
-active stops (about 4–12 s) and uncached regional geometry remain the P2
-limitations. Not merged; no PR, deployment or remote CI. Details:
+HTTP and browser timings are recorded. (Superseded the same night: active
+stops fell to about 0.42 s and a first uncached date after restart to about 3 s;
+see the handoff.) Not merged; no PR, deployment or remote CI. Details:
 [corrective review](CORRECTIVE_REVIEW_20261106.md). Text below up to the
 Phase 2 record describes the earlier paused checkpoint.
 
@@ -267,8 +280,10 @@ remain ignored. The README documents fresh installation and imports.
 2. Done November 7: route timetables page with `offset`/`limit`, with server-side
    direction/variant filters applied before paging and a **Load more** control.
 3. Done November 7: external GTFS validator (v8.0.1, local, 0 ERROR notices).
-   Still open: normalize more optional fields and complete licensing/attribution
-   metadata.
+   Done Phase 5: data-quality indicators (stop service status, interval checks,
+   feed freshness/coverage, validation summary). Still open: normalize more
+   optional fields (a separate migration phase), shape-distance-aware checks, and
+   complete licensing/attribution metadata.
 4. Add historical snapshot-selection controls, exports, physical-stop matching and
    connectivity/accessibility analysis, then validate a second country/region.
 

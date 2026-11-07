@@ -9,7 +9,10 @@ from browser_checks import (BASE, SOURCES, add_rule, api, browser, disable,
 
 
 def clock(seconds):
-    return f'{seconds//3600:02}:{seconds%3600//60:02}' if seconds is not None else '—'
+    # The inspector shows published seconds when present (e.g. ASPO's 06:57:01).
+    if seconds is None:
+        return '—'
+    return f'{seconds//3600:02}:{seconds%3600//60:02}'+(f':{seconds%60:02}' if seconds%60 else '')
 
 
 def main():

@@ -35,5 +35,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Real-data browser smoke failed' }
         Invoke-Native { & $python scripts/smoke_filter_races.py }
         if ($LASTEXITCODE -ne 0) { throw 'Delayed/error/filter-race browser checks failed' }
+        Invoke-Native { & $python scripts/smoke_quality_ui.py }
+        if ($LASTEXITCODE -ne 0) { throw 'Data-quality indicator browser checks failed' }
     }
 } finally { Pop-Location }

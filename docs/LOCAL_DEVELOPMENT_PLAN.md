@@ -57,7 +57,7 @@ under ignored data paths. No import should repeat needlessly.
 - Publish the verified development commit with CI skipped; preserve the checkout,
   downloaded feeds, database, generated evidence and unrelated empty review patch.
 
-## Phase 3 corrective stabilization (current instructions)
+## Phase 3 corrective stabilization (historical; see PHASE5_DATA_QUALITY.md for the current phase)
 
 Resumed November 7: rendering blocker resolved; both browser suites and the full
 `verify_local.ps1 -Browser` workflow pass; performance measured (target not met).

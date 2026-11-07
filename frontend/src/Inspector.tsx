@@ -2,8 +2,11 @@ import {useEffect, useLayoutEffect, useState} from 'react';
 import type {NearbyStops, RouteTimetable as Timetable, StopRoutes} from './api';
 import {endpoints, NetworkGeometry, Route, RouteTimetable, Snapshot, Stop, StopBoard, TimetableTrip, TripDetail} from './api';
 import {useKeyedRequest} from './useKeyedRequest';
+import {intervalText, RouteQualityNotes, ServiceBadge, SourcePanel, StopQualityNotes} from './Quality';
 
 const clock=(s:string|null|undefined)=>s?.slice(11,16)||'—';
+/** HH:MM, plus :SS when the published time has seconds (shown, never rounded away). */
+const gtfsText=(s:number|null,offset=0)=>s===null?'—':gtfs(s,offset)+((s+offset)%60?`:${((s+offset)%60).toString().padStart(2,'0')}`:'');
 const gtfs=(s:number|null,offset=0)=>s===null?'—':`${Math.floor((s+offset)/3600).toString().padStart(2,'0')}:${Math.floor(((s+offset)%3600)/60).toString().padStart(2,'0')}`;
 
 /** Routes whose trips call here, with calls on the selected service day. */
@@ -24,31 +27,24 @@ function RoutesAtStop({stop,date,onRoute}:{stop:Stop;date:string;onRoute:(snapsh
 }
 
 /** Other source records within a straight-line radius; proximity, not a verified match. */
-function Nearby({stop,onStop}:{stop:Stop;onStop:(s:Stop)=>void}){
- const request=useKeyedRequest<NearbyStops>(endpoints.nearby(stop),`${stop.snapshot_id}|${stop.stop_id}|nearby`);
+function Nearby({stop,date,onStop}:{stop:Stop;date:string;onStop:(s:Stop)=>void}){
+ const request=useKeyedRequest<NearbyStops>(endpoints.nearby(stop,date),`${stop.snapshot_id}|${stop.stop_id}|${date}|nearby`);
  const data=request.data;
+ const tally=(status:string)=>data?.stops.filter(s=>s.service?.status===status).length??0;
  return <details className="nearby" open><summary>Nearby stop records within 200 m{data?` (${data.total})`:''}</summary>
    {request.error?<p role="alert">Nearby stops unavailable: {request.error}</p>:!data?<p role="status">Finding nearby stops…</p>:<>
     {data.stops.map(s=><button type="button" className="nearby-stop" key={s.snapshot_id+s.stop_id} data-stop-id={s.stop_id} data-source-id={s.source_id}
       onClick={()=>onStop({snapshot_id:s.snapshot_id,source_id:s.source_id,stop_id:s.stop_id,name:s.name,lat:s.lat,lon:s.lon})}>
-      <span>{s.name||s.stop_id}<small>{s.source_id}{s.same_source?' · same source':''}</small></span><strong>{Math.round(s.distance_m)} m</strong></button>)}
+      <span>{s.name||s.stop_id}<small>{s.source_id} · {s.stop_id}{s.same_source?' · same source':''}</small><ServiceBadge service={s.service}/></span><strong>{Math.round(s.distance_m)} m</strong></button>)}
+    {data.stops.length>0&&<p className="muted nearby-tally">Service day {date}: {tally('scheduled')} scheduled · {tally('not_scheduled_on_date')} with trips on other days only · {tally('no_trip_references')} without any trip references · {tally('unknown')} unknown. Records without trips are listed, not hidden.</p>}
     {!data.stops.length&&<p>No other stop records within {data.radius_m} m.</p>}
     {data.truncated&&<p className="warning">Showing {data.stops.length} of {data.total} nearby records.</p>}
     <small>{data.note}</small></>}
  </details>;
 }
 
-function Provenance({snapshot}:{snapshot:Snapshot|undefined}){
- if(!snapshot)return null;
- return <details className="provenance"><summary>Feed validity and source</summary>
-   <p>{snapshot.source_id} · Calendar coverage {snapshot.feed_start}–{snapshot.feed_end}</p>
-   <p>Publisher-declared validity: {snapshot.feed_info?.feed_start_date||'unspecified'}–{snapshot.feed_info?.feed_end_date||'unspecified'}</p>
-   <p>Retrieved {snapshot.retrieved_at}</p><p>SHA-256 <code>{snapshot.content_sha256}</code></p>
-   <small>Coverage describes the imported feed; missing records do not establish absence of service.</small></details>;
-}
-
-export function Inspector({route,stop,date,timetable,board,timetableError,boardError,snapshots,onGeometry,onDirection,onStop,onRoute}:{
- route:Route|null;stop:Stop|null;date:string;timetable:RouteTimetable|null;board:StopBoard|null;
+export function Inspector({route,stop,source,date,timetable,board,timetableError,boardError,snapshots,onGeometry,onDirection,onStop,onRoute}:{
+ route:Route|null;stop:Stop|null;source?:Snapshot|null;date:string;timetable:RouteTimetable|null;board:StopBoard|null;
  timetableError:string|null;boardError:string|null;snapshots:Snapshot[];onGeometry:(g:NetworkGeometry|null)=>void;onDirection:(d:string)=>void;onStop:(s:Stop)=>void;onRoute:(snapshot:string,route:string)=>boolean}){
  const [direction,setDirection]=useState('all'),[variant,setVariant]=useState('all');
  const [instance,setInstance]=useState<TimetableTrip|null>(null);
@@ -84,10 +80,14 @@ export function Inspector({route,stop,date,timetable,board,timetableError,boardE
  const chosen=variants.find(v=>v.variant_id===variant);
  const offset=instance?instance.departure_seconds-instance.template_first_seconds:0;
  const snapshot=snapshots.find(s=>s.snapshot_id===(route?.snapshot_id??stop?.snapshot_id));
+ // Flags attach to the stop reached by a questionable interval; values stay as published.
+ const flags=new Map<number,string[]>();
+ for(const f of trip?.timing?.findings??[])flags.set(f.to_sequence,[...(flags.get(f.to_sequence)??[]),`${f.classification==='inconsistent'?'Inconsistent':'Implausibly short'}: ${intervalText(f)}`]);
  return <><div className="inspector-heading">INSPECTOR</div>{route?<>
    <div className="inspect-label" data-route-uid={`${route.snapshot_id}:${route.route_id}`} data-service-date={date}>ROUTE</div><h2>{route.short_name||route.route_id}</h2><p>{route.long_name}</p>
    <p>{route.source_id} · {date} · {route.active_on_date?'Active':'Inactive on selected date'}</p>
-   <Provenance snapshot={snapshot}/>
+   <SourcePanel snapshot={snapshot} date={date}/>
+   <RouteQualityNotes route={route}/>
    {timetableError?<p role="alert">Route timetable unavailable: {timetableError}</p>:!timetable?<p role="status">Loading route timetable…</p>:<>
     <p><b>{timetable.total_departures}</b> exact scheduled trips · first {clock(timetable.first_departure)} · last {clock(timetable.last_departure)}</p>
     <label className="direction-picker">Direction <select aria-label="Direction" value={direction} onChange={e=>{setDirection(e.target.value);onDirection(e.target.value);setVariant('all');setTripId('');setInstance(null)}}>
@@ -117,10 +117,14 @@ export function Inspector({route,stop,date,timetable,board,timetableError,boardE
    {busy&&<p role="status">Loading ordered stops and geometry…</p>}{error&&<p role="alert">{error}</p>}
    {trip&&<><div className="section-heading"><span>Ordered stops · {trip.trip.trip_id}</span></div>
     <p className="muted">{instance?'GTFS service-day times, including hours beyond 24:00.':'Template times only; select an exact departure to inspect an operating instance.'} {!trip.geometry.features.length?'No usable geometry was supplied.':trip.geometry.features[0]?.properties.quality==='schematic-stop-link'?'Dashed geometry is schematic.':'Geometry from the source feed.'}</p>
-    <ol className="trip-stops" data-trip-id={trip.trip.trip_id} data-direction={direction} data-variant-id={variant}>{trip.stops.map(s=><li className="trip-stop" data-stop-id={s.stop_id} data-arrival={gtfs(s.arrival_sec,offset)} data-departure={gtfs(s.departure_sec,offset)} key={s.stop_sequence}><button type="button" onClick={()=>onStop({snapshot_id:route.snapshot_id,source_id:route.source_id,...s})}>{s.name||s.stop_id}</button><small>Arr {gtfs(s.arrival_sec,offset)} · Dep {gtfs(s.departure_sec,offset)}{s.timepoint===0?' · estimated timepoint':''}{s.pickup_type===1?' · no boarding':''}{s.drop_off_type===1?' · no alighting':''}</small></li>)}</ol></>}
-  </>:stop?<><div className="inspect-label">STOP</div><h2>{stop.name||stop.stop_id}</h2><p>{stop.source_id} · {stop.stop_id}</p><Provenance snapshot={snapshot}/><RoutesAtStop stop={stop} date={date} onRoute={onRoute}/><Nearby stop={stop} onStop={onStop}/>
+    {!!trip.timing?.findings.length&&<p className="quality-item caution trip-timing" data-quality-code="trip_interval_findings">{trip.timing.findings.length} stop-to-stop interval{trip.timing.findings.length>1?'s':''} in this trip {trip.timing.findings.length>1?'look':'looks'} questionable (marked below). Times are shown exactly as published; distances are straight-line, the shortest possible path.</p>}
+    {trip.timing?.frequency_based&&<p className="muted">Frequency-based trip: intervals are template offsets; departures inside non-exact windows have no exact times.</p>}
+    <ol className="trip-stops" data-trip-id={trip.trip.trip_id} data-direction={direction} data-variant-id={variant}>{trip.stops.map(s=><li className={'trip-stop'+(flags.has(s.stop_sequence)?' flagged':'')} data-quality-flag={flags.has(s.stop_sequence)?'interval':undefined} data-stop-id={s.stop_id} data-arrival={gtfs(s.arrival_sec,offset)} data-departure={gtfs(s.departure_sec,offset)} key={s.stop_sequence}><button type="button" onClick={()=>onStop({snapshot_id:route.snapshot_id,source_id:route.source_id,...s})}>{s.name||s.stop_id}</button><small>Arr {gtfsText(s.arrival_sec,offset)} · Dep {gtfsText(s.departure_sec,offset)}{s.timepoint===0?' · estimated timepoint':''}{s.pickup_type===1?' · no boarding':''}{s.drop_off_type===1?' · no alighting':''}</small>{flags.get(s.stop_sequence)?.map((text,n)=><small className="interval-flag" key={n}>{text}</small>)}</li>)}</ol></>}
+  </>:stop?<><div className="inspect-label">STOP</div><h2>{stop.name||stop.stop_id}</h2><p>{stop.source_id} · {stop.stop_id}</p><StopQualityNotes stop={stop} date={date}/><SourcePanel snapshot={snapshot} date={date}/><RoutesAtStop stop={stop} date={date} onRoute={onRoute}/><Nearby stop={stop} date={date} onStop={onStop}/>
    {boardError?<p role="alert">Stop board unavailable: {boardError}</p>:!board?<p role="status">Loading stop departures…</p>:<><p>{board.departures.length} exact departures on local date {date}</p><div className="departure-list">{board.departures.map((d,i)=><div className="departure" key={i}><strong>{clock(d.local_departure)}</strong><span>{d.route_short_name} · {d.headsign}<small>Service day {d.service_date} · GTFS {d.gtfs_time}{!d.boarding_allowed?' · no boarding':''}</small></span></div>)}</div>
     {board.frequency_windows.map((w,i)=><p className="freq-window" key={i}>{clock(w.start_local)}–{clock(w.end_local)} · every ~{w.headway_seconds/60} min (not exact)</p>)}
     {!board.departures.length&&!board.frequency_windows.length&&<p>No departures reported for this date.</p>}</>}
-  </>:<div className="inspector-empty"><strong>Select a route or stop</strong><span>Click the map or search the imported data to inspect schedules and provenance.</span></div>}</>;
+  </>:source?<><div className="inspect-label" data-source-id={source.source_id}>SOURCE</div><h2>{source.source_id}</h2><p>Snapshot {source.snapshot_id.slice(0,8)} · selected date {date}</p>
+   <SourcePanel snapshot={source} date={date} open/>
+  </>:<div className="inspector-empty"><strong>Select a route or stop</strong><span>Click the map, search the imported data, or choose a source below to inspect schedules, provenance and data quality.</span></div>}</>;
 }
