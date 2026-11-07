@@ -274,4 +274,14 @@ classification from about 2 minutes to about 4 seconds.
 
 ## Commits
 
-COMMITS_PLACEHOLDER
+Local only, not pushed (pushing needs the user's authorization). All commits skip CI.
+
+| Commit | Change |
+|---|---|
+| `1d231ed` | Phase 5 indicators, API, inspectors, tests, browser check, docs |
+| (this commit) | Records the commit hashes in this document |
+
+**Integration readiness.** Every local check passes: tests, build, both
+existing browser suites, the new quality check, and manual inspection. Existing
+routes, stops, variants and timetable instances are unchanged. The branch is ready
+for the user's review. Pushing, opening a PR and merging remain the user's decisions.
