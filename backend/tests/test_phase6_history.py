@@ -253,3 +253,101 @@ def test_real_database_has_one_version_per_source_and_stays_unchanged(real_db):
         [snap] = inv['snapshots']
         assert snap['selected'] and snap['archive']['present'] and 'no version comparison' in inv['note']
         assert snap['validation'] is not None and snap['validation']['errors'] == 0
+
+
+# --- Review fixes (post-2dbc80a): policy-scoped cache and partial coordinates ----------
+
+def _policy_view(result):
+    return (result['policy'], [n['code'] for n in result['notices']],
+            result['summary']['trip_templates_on_date']['attributable_to_feed_version'],
+            {x['id']: x['service']['attributable_to_feed_version'] for x in result['routes']['records']})
+
+
+@pytest.mark.parametrize('first', ['same_date', 'different_dates'])
+def test_cache_key_includes_date_policy_for_identical_dates(db, first):
+    """same_date(D) and different_dates(D, D) must never share a cached comparison."""
+    con, ids, _ = db
+    history = SnapshotHistory(con)
+    day = D(hf.COMMON_DATE)
+    calls = {'same_date': dict(policy='same_date', service_date=day),
+             'different_dates': dict(policy='different_dates', baseline_date=day, comparison_date=day)}
+    second = 'different_dates' if first == 'same_date' else 'same_date'
+    results = {}
+    for policy in (first, second, first):
+        results.setdefault(policy, []).append(history.compare(hf.SOURCE, ids['v1'], ids['v2'], **calls[policy]))
+    assert history.compare_builds == 2  # one build per policy; the repeat is served from cache
+    same, different = results['same_date'][0], results['different_dates'][0]
+    assert _policy_view(same) == ('same_date', [], True, {'R10': True, 'R2': True, 'R9': True})
+    assert _policy_view(different) == ('different_dates', ['different_dates'], False, {'R10': False, 'R2': False, 'R9': False})
+    assert _policy_view(results[first][1]) == _policy_view(results[first][0])
+    # The counts themselves are identical: only the policy semantics differ.
+    assert same['summary']['trip_templates_on_date']['delta'] == different['summary']['trip_templates_on_date']['delta'] == 1
+
+
+def test_api_policy_switch_with_identical_dates_is_not_served_stale(db):
+    con, ids, tmp = db
+    con.close()
+    base = f"/api/v1/history/{hf.SOURCE}/compare?baseline={ids['v1']}&comparison={ids['v2']}"
+    with TestClient(create_app(tmp/'history.sqlite', 'sqlite')) as client:
+        same = client.get(f'{base}&policy=same_date&date={hf.COMMON_DATE}').json()
+        different = client.get(f'{base}&policy=different_dates&baseline_date={hf.COMMON_DATE}&comparison_date={hf.COMMON_DATE}').json()
+        again = client.get(f'{base}&policy=same_date&date={hf.COMMON_DATE}').json()
+    assert (same['policy'], different['policy'], again['policy']) == ('same_date', 'different_dates', 'same_date')
+    assert 'different_dates' in [n['code'] for n in different['notices']] and again['notices'] == []
+
+
+def _set_coordinate(con, snapshot_id, stop_id, field, value):
+    con.execute(f'UPDATE stops SET {field}=? WHERE snapshot_id=? AND stop_id=?', (value, snapshot_id, stop_id))
+    con.commit()
+
+
+def _stop(con, ids, stop_id):
+    result = SnapshotHistory(con).compare(hf.SOURCE, ids['v1'], ids['v2'], policy='same_date',
+                                          service_date=D(hf.COMMON_DATE), record_status='all')
+    return next(x for x in result['stops']['records'] if x['id'] == stop_id)
+
+
+@pytest.mark.parametrize('field', ['lat', 'lon'])
+def test_coordinate_missing_in_comparison_is_a_change(db, field):
+    # Isolated test database only: P is otherwise unchanged between versions.
+    con, ids, _ = db
+    _set_coordinate(con, ids['v2'], 'P', field, None)
+    record = _stop(con, ids, 'P')
+    assert record['status'] == 'modified' and record['moved_m'] is None
+    [change] = record['changes']
+    assert change['field'] == 'coordinates' and 'distance_m' not in change
+    assert change['baseline'] == [40.0, 9.0]
+    assert change['comparison'] == ([None, 9.0] if field == 'lat' else [40.0, None])
+
+
+@pytest.mark.parametrize('field', ['lat', 'lon'])
+def test_coordinate_missing_in_baseline_is_a_change(db, field):
+    con, ids, _ = db
+    _set_coordinate(con, ids['v1'], 'P', field, None)
+    record = _stop(con, ids, 'P')
+    assert record['status'] == 'modified' and record['changes'][0]['comparison'] == [40.0, 9.0]
+
+
+@pytest.mark.parametrize('field', ['lat', 'lon'])
+def test_identical_partial_coordinates_are_unchanged(db, field):
+    con, ids, _ = db
+    for snapshot in (ids['v1'], ids['v2']):
+        _set_coordinate(con, snapshot, 'P', field, None)
+    record = _stop(con, ids, 'P')
+    assert record['status'] == 'unchanged' and record['changes'] == [] and record['moved_m'] is None
+
+
+def test_partial_coordinates_differing_in_the_present_value_or_side_are_changes(db):
+    con, ids, _ = db
+    # Same missing latitude, different longitude: a change, but no distance can be computed.
+    _set_coordinate(con, ids['v1'], 'P', 'lat', None)
+    _set_coordinate(con, ids['v2'], 'P', 'lat', None)
+    _set_coordinate(con, ids['v2'], 'P', 'lon', 9.5)
+    record = _stop(con, ids, 'P')
+    assert record['status'] == 'modified' and record['changes'][0]['comparison'] == [None, 9.5]
+    # Latitude missing on one side, longitude on the other.
+    _set_coordinate(con, ids['v1'], 'R', 'lat', None)
+    _set_coordinate(con, ids['v2'], 'R', 'lon', None)
+    record = _stop(con, ids, 'R')
+    assert record['status'] == 'modified' and record['changes'][0]['baseline'] == [None, 9.0]
+    assert record['changes'][0]['comparison'] == [40.02, None]

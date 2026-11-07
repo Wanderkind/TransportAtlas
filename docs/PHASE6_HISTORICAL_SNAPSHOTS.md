@@ -38,8 +38,11 @@ everything built on it (`/snapshots`, `/summary`, `/routes`, `/stops`,
   - Per-snapshot facts (routes, stops, trips, frequencies, and the grouped
     stop→service map) are cached by `snapshot_id`.
   - Shape point digests are computed lazily, only when comparing.
-  - Comparisons are cached by `(baseline_id, comparison_id, baseline_date,
-    comparison_date)`, at most 64 entries. Paging reuses the cached comparison.
+  - Comparisons are cached by `(policy, baseline_id, comparison_id,
+    baseline_date, comparison_date)`, at most 64 entries. Paging reuses the cached
+    comparison. The policy is part of the key (fixed in review; see below):
+    `same_date` on D and `different_dates` with D/D give the same counts but
+    different notices and attribution.
   - None of these caches is shared with the atlas network or quality caches.
 - **Three things are never conflated:**
   - the retrieval time (`retrieved_at`, the local download);
@@ -137,8 +140,13 @@ GTFS **service day**: calendar plus `calendar_dates` exceptions, with times afte
 `modified` or `unchanged`. Fields compared:
 - routes: `agency_id`, `short_name`, `long_name`, `route_type`, `route_color`,
   and the distinct trip headsigns;
-- stops: `name`, `location_type`, `parent_station`, and coordinates (moved
-  > 1 m, haversine, with the distance reported).
+- stops: `name`, `location_type`, `parent_station`, and coordinates:
+  - when both sides have a full lat/lon pair, a move of more than 1 m (haversine)
+    is a change, and the distance is reported;
+  - when either side lacks a latitude or a longitude, any difference in the
+    `[lat, lon]` pair is a change. That includes a value appearing or
+    disappearing, or a different component being missing. No distance is
+    reported, because none can be computed.
 
 **Identity limits**, stated in every response: an equal ID is a feed-record
 match, not proof of the same physical route or stop. A new or missing ID is a
@@ -325,6 +333,62 @@ As a cross-check, ARST compared with itself shows 0 changed records out of 322
 routes, 3,450 stops and 2,418 shapes. Its 4,731 trip templates on 2026-11-06
 equal the count independently verified in Phase 3.
 
+## Review fixes after `2dbc80a`
+
+A review of the pushed Phase 6 commits found two defects. Both are fixed, each
+with regression tests that failed before the fix (6 failed, 18 passed) and pass
+after it.
+
+1. **The comparison cache ignored the date policy.** Its key was
+   `(baseline, comparison, baseline_date, comparison_date)`. A `same_date`
+   request on D and a `different_dates` request with D/D therefore shared one
+   entry, and whichever ran second received the first one's `policy`, notices
+   and `attributable_to_feed_version` values. A different-dates request could
+   come back labelled as a feed-version-only comparison, or the reverse. The
+   counts were identical; the interpretation was wrong. The key now starts with
+   the policy.
+
+   Tests: `test_cache_key_includes_date_policy_for_identical_dates`, run with
+   `same_date` first and with `different_dates` first. Each checks two builds,
+   a cached repeat, the correct policy, notices and attribution in both
+   responses, and identical deltas. A second test,
+   `test_api_policy_switch_with_identical_dates_is_not_served_stale`, makes the
+   same switch through the HTTP API.
+
+2. **Partial coordinates were compared on latitude only.** If both sides had a
+   latitude but one lacked a longitude, the stop was reported `unchanged`. A
+   latitude missing on one side and a longitude on the other was also missed.
+   Change detection now compares the whole `[lat, lon]` pair whenever either side
+   is incomplete. Tests cover each case separately for latitude and for longitude:
+   - missing in the comparison, then missing in the baseline: both `modified`,
+     with no distance;
+   - missing identically on both sides: `unchanged`;
+   - the same component missing on both sides but the other value different:
+     `modified`;
+   - latitude missing on one side and longitude on the other: `modified`.
+
+   These tests change coordinates only in each test's own temporary SQLite copy.
+   The synthetic fixtures and the real data are unchanged.
+
+Read-only behaviour is unchanged. Both fixes are in `history.py` only, and no
+schema, `selection_members` row or archive is touched.
+
+Verification of the review fixes (local, 2026-11-07):
+
+- **Python, services stopped:** `pytest -q backend/tests` gives **144 passed,
+  0 skipped**: the previous 134 plus the 10 new regression tests, including the
+  5 real-database tests. The Phase 6 file alone has 24 tests.
+- **`verify_local.ps1 -Browser` on the real database** (log
+  `verify-phase6-review-20261107-140042.log`): Python 139 passed and 5 skipped.
+  The skipped tests are the real-DuckDB cases, which cannot open the file while
+  the backend holds its lock; they ran above. Also: loopback startup 5.9 s; the
+  build; the real-data smoke (6 check groups, ready in 7.2 s); the filter races;
+  the Phase 5 quality check; and the History check in real mode. All passed.
+- **History check in synthetic mode**, on the rebuilt `data/history-demo/`
+  database: all 7 check groups passed.
+- **Real database:** its SHA-256 is still `3c308708…` before and after, and the
+  services are stopped.
+
 ## Limitations
 
 - **Only one genuine version per operator exists locally.** Real comparisons of
@@ -370,13 +434,14 @@ equal the count independently verified in Phase 3.
 
 ## Commits
 
-Local only, on `codex/local-real-feed-atlas`. Not pushed: there is no PR, merge,
-deployment or GitHub Actions run, and pushing needs the user's authorization.
+On `codex/local-real-feed-atlas`. There has been no PR, merge, deployment or
+GitHub Actions run.
 
 | Commit | Change |
 |---|---|
-| `27ab6d6` | History backend, API, UI, synthetic fixtures, tests, browser check, docs |
-| (this commit) | Records the commit hash in this document |
+| `27ab6d6` | History backend, API, UI, synthetic fixtures, tests, browser check, docs (pushed with the user's authorization) |
+| `2dbc80a` | Records the commit hash in this document (pushed with the user's authorization) |
+| (review-fix commit) | Policy-scoped comparison cache; partial-coordinate change detection; 10 regression tests; this report. Local only, not pushed |
 
 **Readiness:** the definition of done is met for synthetic data, and every local
 check passed. Real comparisons need a second authorized import per operator.

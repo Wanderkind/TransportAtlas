@@ -274,7 +274,8 @@ class SnapshotHistory:
             day_a, day_b = baseline_date, comparison_date
         if record_status not in ('changed', 'all', *RECORD_STATUSES):
             raise HistoryError('record_status must be changed, all, added, removed, modified or unchanged.')
-        key = (baseline_id, comparison_id, day_a.isoformat(), day_b.isoformat())
+        # The policy changes notices and attribution even when the dates are equal.
+        key = (policy, baseline_id, comparison_id, day_a.isoformat(), day_b.isoformat())
         with self._lock:
             full = self._compare_cache.get(key)
         if full is None:
@@ -359,15 +360,18 @@ class SnapshotHistory:
             a, b = fa['stops'].get(stop_id), fb['stops'].get(stop_id)
             status, changes = _record_status(a, b, STOP_FIELDS)
             moved = None
-            if a and b and None not in (a['lat'], a['lon'], b['lat'], b['lon']):
-                moved = round(distance_m(a['lat'], a['lon'], b['lat'], b['lon']), 1)
-                if moved > COORDINATE_TOLERANCE_M:
-                    changes.append({'field': 'coordinates', 'baseline': [a['lat'], a['lon']],
-                                    'comparison': [b['lat'], b['lon']], 'distance_m': moved})
+            if a and b:
+                before, after = [a['lat'], a['lon']], [b['lat'], b['lon']]
+                if None not in before and None not in after:
+                    moved = round(distance_m(*before, *after), 1)
+                    if moved > COORDINATE_TOLERANCE_M:
+                        changes.append({'field': 'coordinates', 'baseline': before, 'comparison': after, 'distance_m': moved})
+                        status = 'modified'
+                elif before != after:
+                    # A coordinate is missing on at least one side: any difference in either
+                    # component (including which one is missing) is a change; no distance exists.
+                    changes.append({'field': 'coordinates', 'baseline': before, 'comparison': after})
                     status = 'modified'
-            elif a and b and (a['lat'] is None) != (b['lat'] is None):
-                changes.append({'field': 'coordinates', 'baseline': [a['lat'], a['lon']], 'comparison': [b['lat'], b['lon']]})
-                status = 'modified'
             served = {'baseline': (stop_id in ma['served_stops']) if ma['available'] and a else None,
                       'comparison': (stop_id in mb['served_stops']) if mb['available'] and b else None}
             records.append({'id': stop_id, 'status': status, 'changes': changes, 'moved_m': moved,
