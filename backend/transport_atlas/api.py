@@ -272,11 +272,13 @@ def create_app(db_path: str | Path | None = None,backend: str | None = None):
 
     @app.get('/api/v1/history/{source_id}/snapshots')
     def history_snapshots(source_id: str, date_value: date | None = Query(default=None, alias='date'),
-                          verify_archives: bool = False):
+                          verify_archives: bool = False, sort: str = 'retrieved'):
         try:
-            return app.state.history.inventory(source_id, date_value, verify_archives=verify_archives)
+            return app.state.history.inventory(source_id, date_value, verify_archives=verify_archives, sort=sort)
         except NotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc.args[0]))
+        except HistoryError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
 
     @app.get('/api/v1/history/{source_id}/compare')
     def history_compare(source_id: str, baseline: str, comparison: str, policy: str = 'same_date',

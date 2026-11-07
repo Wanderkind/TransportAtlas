@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections import defaultdict
 import hashlib
 import json
-from pathlib import Path
 from .storage import rows, one
 from .provenance import declared_info
+from .archive_provenance import PUBLISHER_DIRECT, classify
 
 
 def route_variants(con, snapshot_id, route_id):
@@ -40,13 +40,12 @@ def route_evidence(con, snapshot_id, route_id):
             WHERE s.snapshot_id=?''', (snapshot_id,))
     if provenance:
         provenance['feed_info'] = declared_info(provenance['raw_zip_path'], provenance['content_sha256'])
-        provenance['download_url'] = None
-        sidecar = Path(provenance['raw_zip_path']).with_suffix('.zip.provenance.json')
-        if sidecar.exists():
-            meta = json.loads(sidecar.read_text(encoding='utf-8'))
-            if meta.get('source_id') == provenance['source_id'] and meta.get('sha256') == provenance['content_sha256']:
-                provenance['download_url'] = meta.get('download_url')
-                provenance['landing_url'] = meta.get('landing_url', provenance['landing_url'])
+        # Only a publisher-direct record supplies a download URL; an archived copy's
+        # archive URL is never presented as the official download (Phase 7C).
+        evidence = classify(provenance, publisher=provenance['publisher'], landing_url=provenance['landing_url'])
+        provenance['provenance_kind'] = evidence['kind']
+        provenance['download_url'] = evidence['download_origin'] if evidence['kind'] == PUBLISHER_DIRECT else None
+        provenance['landing_url'] = evidence['publisher']['landing_url'] or provenance['landing_url']
     return dict(
         provenance=provenance,
         calendars=rows(con, f'SELECT * FROM calendars WHERE snapshot_id=? AND service_id IN ({services}) ORDER BY service_id', params),

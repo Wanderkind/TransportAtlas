@@ -16,6 +16,7 @@ from pathlib import Path
 from uuid import uuid4
 from .gtfs import FeedError, clock_seconds, optional_int, optional_float, read_feed, service_date
 from .storage import one, insert_many
+from .archive_provenance import is_archive_record
 
 WEEKDAYS = ("monday","tuesday","wednesday","thursday","friday","saturday","sunday")
 
@@ -139,7 +140,7 @@ def _discard_created(con, created: list[Path], source_id: str, digest: str, exc:
 def import_file(con, file: str | Path, *, source_id: str, archive_dir: str | Path,
                 publisher: str | None = None, landing_url: str | None = None,
                 license_name: str | None = None, activate: bool = True,
-                expected_sha256: str | None = None) -> dict:
+                expected_sha256: str | None = None, archive_provenance: bool = False) -> dict:
     """Parse+validate before BEGIN, then commit the snapshot (and, if ``activate``, the
     selection pointer) in one transaction.
 
@@ -152,6 +153,12 @@ def import_file(con, file: str | Path, *, source_id: str, archive_dir: str | Pat
     ``expected_sha256`` (used by the admin path) refuses any bytes other than the ones
     the caller verified. In every mode the ZIP is re-hashed after parsing, so the parsed
     rows, the recorded hash and the archived copy are guaranteed to be the same bytes.
+
+    ``archive_provenance`` (Phase 7C) must be set to import a copy whose sidecar is a
+    third-party archive record; such a sidecar is refused otherwise, archived copies are
+    never activated, and they never replace ``feed_sources.download_url`` (which keeps
+    meaning the publisher's official URL). The record's full validation lives in
+    ``admin`` (``archive_provenance.archive_problems``).
     """
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,79}', source_id):
         raise FeedError("source_id must contain safe ASCII letters, numbers, _ or -")
@@ -168,6 +175,15 @@ def import_file(con, file: str | Path, *, source_id: str, archive_dir: str | Pat
         retrieved = datetime.fromisoformat(provenance['retrieved_at'])
         if retrieved.tzinfo is None:
             raise FeedError('Download provenance retrieval timestamp requires a timezone')
+    archived = is_archive_record(provenance)
+    if archive_provenance:
+        if not archived:
+            raise FeedError('archive_provenance requires a third-party archive provenance sidecar')
+        if activate:
+            raise FeedError('Archived copies are never activated on import; pass activate=False')
+    elif archived:
+        raise FeedError('The sidecar describes a third-party archived copy; import it explicitly with '
+                        'manage_snapshots.py import --archive-provenance')
     existing=one(con,"SELECT snapshot_id FROM feed_snapshots WHERE source_id=? AND content_sha256=? AND import_status='ready'",(source_id,digest))
     if existing:
         return dict(status="unchanged",snapshot_id=existing['snapshot_id'],source_id=source_id,sha256=digest)
@@ -227,7 +243,8 @@ def import_file(con, file: str | Path, *, source_id: str, archive_dir: str | Pat
         if one(con,'SELECT source_id FROM feed_sources WHERE source_id=?',(source_id,)) is None:
             con.execute('INSERT INTO feed_sources VALUES(?,?,?,?,?)',
                         (source_id,publisher or source_id,landing_url,None,license_name))
-        if provenance is not None:
+        if provenance is not None and not archived:
+            # Only a publisher-direct download updates the source's official URL.
             con.execute('UPDATE feed_sources SET download_url=? WHERE source_id=?',
                         (provenance.get('download_url'), source_id))
         con.execute('INSERT INTO feed_snapshots VALUES(?,?,?,?,?,?,?,?,?)',

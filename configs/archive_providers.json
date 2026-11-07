@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "note": "Third-party GTFS archives whose copies may be imported with honest archive provenance (Phase 7C). Never add a provider's hosts to the official downloader's allowlist. A provider stays disabled until a reviewed change verifies its download hosts and the user authorizes a specific download.",
+  "providers": {
+    "transitland": {
+      "name": "Transitland Feed Archive",
+      "record_hosts": ["www.transit.land", "transit.land"],
+      "download_hosts": [],
+      "version_id": "sha1",
+      "import_enabled": false,
+      "disabled_reason": "Transitland's download hosts are not yet verified from its documentation, and no historical download has been authorized (Phase 7B gate)."
+    }
+  }
+}

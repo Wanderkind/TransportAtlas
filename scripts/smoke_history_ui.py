@@ -1,9 +1,12 @@
-"""Real-browser checks for the Phase 6 History view.
+"""Real-browser checks for the Phase 6 History view (with Phase 7C provenance).
 
-Two modes, chosen from what the running backend serves:
+Modes, chosen from what the running backend serves:
 
 * synthetic: backend started on data/history-demo/history_demo.duckdb (see
-  scripts/build_history_demo.py). Full comparison workflow.
+  scripts/build_history_demo.py). Full comparison workflow. If the demo was built
+  with --admin-stage archived, the Phase 7C checks run instead: an invented
+  third-party archived copy is labelled as such, observation and local retrieval
+  times are shown and sorted separately, and a same-date comparison still works.
 * real: the user's four-source database. Each operator has one snapshot, so the
   view must say comparison is impossible, and the atlas must be unchanged.
 
@@ -26,6 +29,14 @@ def set_value(driver, label, value):
     driver.execute_script("Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(arguments[0],arguments[1]);"
                           "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));arguments[0].dispatchEvent(new Event('change',{bubbles:true}));",
                           element, value)
+
+
+def provenance_cells(driver):
+    return {e.get_attribute('data-snapshot-id'): (e.find_element(By.CSS_SELECTOR, '[data-field="provenance"]').get_attribute('data-provenance-kind'),
+                                                   e.find_element(By.CSS_SELECTOR, '[data-field="provenance"]').text,
+                                                   e.find_element(By.CSS_SELECTOR, '[data-field="observed"]').text,
+                                                   e.find_element(By.CSS_SELECTOR, '[data-field="retrieved"]').text)
+            for e in driver.find_elements(By.CSS_SELECTOR, '.history-table.snapshots tbody tr')}
 
 
 def snapshot_rows(driver):
@@ -143,6 +154,53 @@ def synthetic(driver, report, sources):
     ready(driver, DATE, set(sources) - {'none'})
 
 
+def archived(driver, report, sources):
+    """Phase 7C: an invented archived copy of the OLDER version, obtained after the current one."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'backend'/'tests'))
+    import history_fixtures as hf
+    observed = api(f'history/{hf.SOURCE}/snapshots?date={DATE}&sort=observed')['snapshots']
+    retrieved = api(f'history/{hf.SOURCE}/snapshots?date={DATE}&sort=retrieved')['snapshots']
+    old, new = [s['snapshot_id'] for s in observed]
+    assert [s['snapshot_id'] for s in retrieved] == [new, old], 'archived copy was obtained after the current one'
+    assert [s['provenance']['kind'] for s in observed] == ['third_party_archived', 'publisher_direct']
+    selection_before = [s['snapshot_id'] for s in api('snapshots')]
+    assert next(s['snapshot_id'] for s in api('snapshots') if s['source_id'] == hf.SOURCE) == new
+    report['current_synthetic_version'] = 'archived'
+    driver.get(BASE+f'/?date={DATE}&basemap=plain&diagnostics=1&view=history')
+    until(driver, lambda d: snapshot_rows(d) == [(old, 'false', 'Yes'), (new, 'true', 'Yes')], 'observation-ordered inventory')
+    cells = provenance_cells(driver)
+    kind, label, seen, got = cells[old]
+    assert kind == 'third_party_archived' and 'Archived copy' in label and 'SYNTHETIC Example Archive' in label, cells[old]
+    assert 'not downloaded from the publisher by this computer' in label and 'CC-BY-4.0' in label, label
+    assert seen.startswith('2026-08-28') and 'per the archive record' in seen, seen
+    assert got[:10] == observed[0]['retrieved_at'][:10] and got[:10] != '2026-08-28', got
+    assert cells[new][0] == 'publisher_direct' and 'our own download' in cells[new][2], cells[new]
+    assert 'observation time' in text(driver, '.sort-note').lower()
+    report['checks'].append('archived copy labelled with its archive, publisher, licence; archive observation and local retrieval shown separately')
+    Select(driver.find_element(By.CSS_SELECTOR, 'select[aria-label="Snapshot order"]')).select_by_value('retrieved')
+    until(driver, lambda d: [r[0] for r in snapshot_rows(d)] == [new, old], 'retrieval-ordered inventory')
+    assert 'local retrieval time' in text(driver, '.sort-note')
+    report['sort_screenshot'] = screenshot(driver, 'phase7c-history-retrieval-order')
+    Select(driver.find_element(By.CSS_SELECTOR, 'select[aria-label="Snapshot order"]')).select_by_value('observed')
+    until(driver, lambda d: [r[0] for r in snapshot_rows(d)] == [old, new], 'observation order restored')
+    report['checks'].append('the two orders differ and are labelled; neither is presented as publication chronology')
+    run_compare(driver)
+    comparison_ready(driver, old, new, 'same_date')
+    assert driver.find_elements(By.CSS_SELECTOR, '.synthetic-banner[data-synthetic="true"]')
+    notice = text(driver, '[data-notice="baseline_third_party_archived"]')
+    assert 'SYNTHETIC Example Archive' in notice and 'not downloaded from the publisher' in notice and '2026-08-28' in notice, notice
+    side = driver.find_element(By.CSS_SELECTOR, '.side[data-side="baseline"] [data-field="side-provenance"]')
+    assert side.get_attribute('data-provenance-kind') == 'third_party_archived' and 'observed 2026-08-28' in side.text, side.text
+    status, cells = metric(driver, 'trip_templates_on_date')
+    assert status == 'changed' and cells[1:4] == ['8', '9', '+1'], cells
+    report['archived_screenshot'] = screenshot(driver, 'phase7c-history-archived-compare')
+    report['checks'].append('same-date comparison of an archived older copy with the current version, with an attribution notice')
+    back_to_atlas(driver, selection_before, report)
+    ready(driver, DATE, set(sources) - {'none'})
+
+
 def real(driver, report):
     selection_before = [s['snapshot_id'] for s in api('snapshots')]
     driver.get(BASE+f'/?date={DATE}&basemap=plain&diagnostics=1')
@@ -157,9 +215,11 @@ def real(driver, report):
         until(driver, lambda d: snapshot_rows(d) == [(expected, 'true', 'Yes')], f'{source} single current snapshot')
         note = text(driver, '[data-comparison-possible="false"]')
         assert 'no version comparison is possible' in note and not driver.find_elements(By.CSS_SELECTOR, '.compare-form')
+        kind = provenance_cells(driver)[expected][0]
+        assert kind == 'publisher_direct', (source, kind)
         seen[source] = expected
     report['real_sources'] = seen
-    report['checks'].append('each real operator shows its single snapshot and that comparison is not possible')
+    report['checks'].append('each real operator shows its single snapshot (publisher download) and that comparison is not possible')
     report['real_screenshot'] = screenshot(driver, 'phase6-history-real')
     back_to_atlas(driver, selection_before, report)
     state = ready(driver, DATE, SOURCES)
@@ -174,7 +234,11 @@ def main():
     driver = browser()
     try:
         started = time.perf_counter()
-        synthetic(driver, report, sources) if report['mode'] == 'synthetic' else real(driver, report)
+        if report['mode'] == 'synthetic':
+            kinds = {s['provenance']['kind'] for s in api(f'history/synthetic_valley/snapshots?date={DATE}')['snapshots']}
+            (archived if 'third_party_archived' in kinds else synthetic)(driver, report, sources)
+        else:
+            real(driver, report)
         report['elapsed_ms'] = round((time.perf_counter()-started)*1000)
         report['browser_logs'] = logs(driver)
         severe = [e for e in report['browser_logs'] if e['level'] == 'SEVERE' and 'favicon.ico' not in e['message']

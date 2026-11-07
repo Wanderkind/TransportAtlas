@@ -12,6 +12,12 @@ Three things are never conflated:
 * **feed version** (``feed_info.feed_version``, publisher text) and declared validity;
 * **service date** (a GTFS service day evaluated against calendars + exceptions).
 
+Phase 7C adds per-snapshot **acquisition provenance** (``archive_provenance.classify``):
+publisher-direct download, third-party archived copy, synthetic fixture or unknown
+legacy. For an archived copy the archive's own **observation time** (when the archive
+fetched it from the publisher) is shown separately from our local retrieval time, and
+the inventory can be ordered by either; neither is a publication or service date.
+
 Identity: records are matched only by their GTFS ID *within one source*.
 A matching ID is a feed-record match, not proof of the same physical route or
 stop; a different ID is a record change, not proof of a real-world addition or
@@ -28,6 +34,7 @@ from threading import Lock
 
 from .nearby import distance_m
 from .provenance import declared_info, feed_info_present
+from .archive_provenance import THIRD_PARTY, classify
 from .quality import validation_record, version_date
 from .schedule import active_services
 from .storage import one, rows
@@ -38,6 +45,14 @@ STOP_FIELDS = ('name', 'location_type', 'parent_station')
 COORDINATE_TOLERANCE_M = 1.0
 RECORD_STATUSES = ('added', 'removed', 'modified', 'unchanged')
 POLICIES = ('same_date', 'different_dates')
+SORTS = {
+    'retrieved': ('Ordered by local retrieval time: when this computer obtained each copy. An archived copy '
+                  'obtained recently sorts late even if the archive observed it long ago.'),
+    'observed': ('Ordered by observation time: when the feed was observed being published (the archive\'s '
+                 'record for archived copies, our own download for publisher-direct copies). Snapshots without '
+                 'a known observation time come last, in retrieval order. This is not a publication date: intermediate releases '
+                 'may exist that neither we nor the archive observed.'),
+}
 
 IDENTITY_NOTE = ('Records are matched by GTFS ID within this one source. An unchanged ID is a feed-record match, '
                  'not proof of the same physical route or stop; a new or missing ID is a feed-record change, not '
@@ -101,12 +116,20 @@ class SnapshotHistory:
             raise NotFound(f'Unknown snapshot {snapshot_id}')
         return snap
 
-    def inventory(self, source_id: str, service_day: date | None = None, *, verify_archives: bool = False) -> dict:
-        if one(self.con, 'SELECT source_id FROM feed_sources WHERE source_id=?', (source_id,)) is None:
+    def inventory(self, source_id: str, service_day: date | None = None, *, verify_archives: bool = False,
+                  sort: str = 'retrieved') -> dict:
+        source = one(self.con, 'SELECT * FROM feed_sources WHERE source_id=?', (source_id,))
+        if source is None:
             raise NotFound(f'Unknown source {source_id}')
+        if sort not in SORTS:
+            raise HistoryError(f'Unknown sort {sort!r}; use retrieved or observed.')
         selected = one(self.con, 'SELECT snapshot_id FROM selection_members WHERE source_id=?', (source_id,))
         snaps = rows(self.con, 'SELECT * FROM feed_snapshots WHERE source_id=? ORDER BY retrieved_at,snapshot_id', (source_id,))
-        items = [self._describe(s, selected and selected['snapshot_id'], service_day, verify_archives) for s in snaps]
+        items = [self._describe(s, selected and selected['snapshot_id'], service_day, verify_archives, source)
+                 for s in snaps]
+        if sort == 'observed':
+            items.sort(key=lambda i: (i['observed_at'] is None, _utc(i['observed_at']), _utc(i['retrieved_at']),
+                                      i['snapshot_id']))
         ready = [i for i in items if i['import_status'] == 'ready']
         if len(ready) < 2:
             note = (f'Only {len(ready)} ready snapshot of this source is archived and imported, so no version '
@@ -115,10 +138,16 @@ class SnapshotHistory:
             note = f'{len(ready)} ready snapshots can be compared.'
         return {'source_id': source_id, 'service_date': service_day.isoformat() if service_day else None,
                 'snapshots': items, 'ready_snapshots': len(ready), 'comparison_possible': len(ready) >= 2,
-                'note': note, 'identity_note': IDENTITY_NOTE}
+                'note': note, 'identity_note': IDENTITY_NOTE, 'sort': sort, 'sort_note': SORTS[sort]}
 
-    def _describe(self, snap: dict, selected_id, service_day, verify) -> dict:
+    def provenance(self, snap: dict, source: dict | None = None) -> dict:
+        source = source or one(self.con, 'SELECT * FROM feed_sources WHERE source_id=?', (snap['source_id'],)) or {}
+        return classify(snap, synthetic=self._synthetic(snap), publisher=source.get('publisher'),
+                        landing_url=source.get('landing_url'))
+
+    def _describe(self, snap: dict, selected_id, service_day, verify, source=None) -> dict:
         sid = snap['snapshot_id']
+        prov = self.provenance(snap, source)
         path = Path(snap['raw_zip_path'])
         present = path.is_file()
         archive = {'path': str(path), 'present': present, 'bytes': path.stat().st_size if present else None,
@@ -134,7 +163,9 @@ class SnapshotHistory:
             'import_status': snap['import_status'], 'selected': sid == selected_id,
             'comparable': snap['import_status'] == 'ready',
             'retrieved_at': snap['retrieved_at'],
-            'retrieval_note': 'When this local copy was downloaded; not a publication or service date.',
+            'retrieval_note': 'When this computer obtained this local copy; not a publication or service date.',
+            'provenance': prov,
+            'observed_at': prov['observed_at'], 'observation_basis': prov['observation_basis'],
             'archive': archive,
             'feed_info': {'present': has_info if present else None,
                           'publisher_name': info.get('feed_publisher_name') or None,
@@ -300,6 +331,16 @@ class SnapshotHistory:
             notices.append({'code': 'different_dates', 'level': 'caution',
                             'text': (f'Both the feed version and the service date differ ({day_a} vs {day_b}). Differences are '
                                      'not attributable to the feed update alone, and this is not a timetable-revision comparison.')})
+        pa, pb = self.provenance(base), self.provenance(comp)
+        for prov, role in ((pa, 'baseline'), (pb, 'comparison')):
+            if prov['kind'] == THIRD_PARTY:
+                archive = prov['archive'] or {}
+                notices.append({'code': f'{role}_third_party_archived', 'level': 'info',
+                                'text': (f"The {role} is an archived copy from {archive.get('provider_name') or 'a third-party archive'}"
+                                         f" (archive observation {(prov['observed_at'] or 'unknown')[:10]}; obtained locally "
+                                         f"{prov['local_retrieved_at'][:10]}), originally published by "
+                                         f"{prov['publisher']['name'] or 'the publisher'}. It was not downloaded from the "
+                                         'publisher by this computer.')})
         for metrics, snap, role in ((ma, base, 'baseline'), (mb, comp, 'comparison')):
             if not metrics['available']:
                 notices.append({'code': f'{role}_date_outside_coverage', 'level': 'caution', 'text': metrics['reason']})
@@ -323,7 +364,7 @@ class SnapshotHistory:
                           else 'unchanged' if shapes_a[shape_id] == shapes_b[shape_id] else 'modified')] += 1
         return {
             'source_id': base['source_id'], 'policy': policy,
-            'baseline': _side(base, day_a, ma), 'comparison': _side(comp, day_b, mb),
+            'baseline': _side(base, day_a, ma, pa), 'comparison': _side(comp, day_b, mb, pb),
             'synthetic': self._synthetic(base) or self._synthetic(comp),
             'notices': notices, 'identity_note': IDENTITY_NOTE,
             'definitions': DEFINITIONS, 'summary': summary,
@@ -416,9 +457,12 @@ def _stop_view(s):
     return None if s is None else {k: s.get(k) for k in ('name', 'lat', 'lon', 'location_type', 'parent_station')}
 
 
-def _side(snap, day, metrics):
+def _side(snap, day, metrics, prov):
     return {'snapshot_id': snap['snapshot_id'], 'content_sha256': snap['content_sha256'],
-            'retrieved_at': snap['retrieved_at'], 'observed_coverage': {'start': snap['feed_start'], 'end': snap['feed_end']},
+            'retrieved_at': snap['retrieved_at'], 'observed_at': prov['observed_at'],
+            'provenance': {k: prov[k] for k in ('kind', 'label', 'synthetic', 'publisher', 'archive', 'license',
+                                                'download_origin', 'observation_basis')},
+            'observed_coverage': {'start': snap['feed_start'], 'end': snap['feed_end']},
             'service_date': day.isoformat(), 'date_in_coverage': metrics['available'], 'reason': metrics['reason']}
 
 
@@ -439,6 +483,18 @@ def _page(full: dict, status: str, limit: int, offset: int) -> dict:
 
 def _covered(snap: dict, day: date) -> bool:
     return bool(snap.get('feed_start')) and snap['feed_start'] <= day.isoformat() <= (snap.get('feed_end') or '')
+
+
+def _utc(value) -> str:
+    """Sortable UTC text of an aware ISO time (empty if unknown)."""
+    if not value:
+        return ''
+    try:
+        from datetime import datetime, timezone
+        parsed = datetime.fromisoformat(value)
+        return parsed.astimezone(timezone.utc).isoformat() if parsed.utcoffset() is not None else value
+    except ValueError:
+        return value
 
 
 def _iso(raw):

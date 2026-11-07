@@ -94,6 +94,16 @@ Mutating `data/transport_atlas.duckdb` additionally needs `--real-database`.
 **No second real feed version has been obtained or imported**; real historical
 comparison remains unverified.
 
+A copy obtained from a third-party archive (for example a historical version from
+Transitland) needs `--archive-provenance` and a separate archive provenance
+record. It is attributed to the archive, never updates the source's official
+download URL, and is never activated by the import. History shows how each copy
+was obtained and can order snapshots by archive observation time or by local
+retrieval time. Archive providers are listed in `configs/archive_providers.json`;
+**Transitland is disabled** until a reviewed change verifies its download hosts
+and the user authorizes a specific download
+([details](docs/PHASE7C_ARCHIVE_PROVENANCE.md)).
+
 ## Start and stop
 
 Launch both services in hidden local processes:

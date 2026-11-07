@@ -1,8 +1,34 @@
 # Implementation status — Windows local development, 2026-11-07
 
-## Current: Phase 7A safe snapshot administration
+## Current: Phase 7C archived-feed provenance
 
-Phase 7A (local commit, not pushed) adds `scripts/manage_snapshots.py`, a CLI-only,
+Phase 7C (local commit, not pushed) lets a GTFS copy obtained from a third-party
+archive be imported later with **honest attribution**: `manage_snapshots.py import
+--archive-provenance` requires a separate archive provenance record (publisher as
+context, archive provider, record URL, archive SHA-1 checked against the bytes,
+HTTPS download origin on the provider's hosts, archive observation time, local
+retrieval time, licence and attribution). The record stays in the immutable
+per-snapshot sidecar, so **no table or column was added** and the real database
+cannot be migrated by app startup. Archived copies never change
+`feed_sources.download_url` and are never activated. History labels each snapshot as
+a publisher download, archived copy, synthetic fixture or unknown legacy record, and
+can order snapshots by observation or by retrieval time.
+
+Everything was exercised only on synthetic data from an invented archive provider.
+Transitland is registered but **disabled**. **No historical feed has been obtained or
+imported**, and the real database is unchanged (SHA-256 `3c308708…` before and after).
+See [PHASE7C_ARCHIVE_PROVENANCE.md](PHASE7C_ARCHIVE_PROVENANCE.md).
+
+## Historical: Phase 7B source assessment (research only)
+
+[PHASE7B_SOURCE_ASSESSMENT.md](PHASE7B_SOURCE_ASSESSMENT.md): ASPO Olbia `b48388a2…` →
+`a710bc7c…` on 2026-11-06 is the recommended first pair. The local ASPO archive's SHA-1
+matches Transitland's `a710bc7c…`; the older ZIP needs an eligible account and the user's
+authorization.
+
+## Historical: Phase 7A safe snapshot administration
+
+Phase 7A (pushed) adds `scripts/manage_snapshots.py`, a CLI-only,
 preview-by-default path for listing snapshots, importing an existing local ZIP
 **without** changing the atlas selection, and selecting or restoring a snapshot
 under an expected-current precondition. Every mutation needs stopped services and

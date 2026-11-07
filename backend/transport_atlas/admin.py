@@ -35,6 +35,8 @@ from .gtfs import FeedError, read_feed
 from .ingest import _validate, import_file
 from .official import ALLOWED_OFFICIAL_HOSTS, catalog, safe_url
 from .provenance import declared_info
+from .archive_provenance import (PUBLISHER_DIRECT, SYNTHETIC, THIRD_PARTY, archive_problems,
+                                 classify, is_archive_record, load_providers, sha1_file)
 
 ROOT = Path(__file__).resolve().parents[2]
 REAL_DB = ROOT / 'data' / 'transport_atlas.duckdb'
@@ -231,7 +233,9 @@ def status(target: Target, *, source_id: str | None = None, verify_archives: boo
                 'feed_version': info.get('feed_version') or None,
                 'archive': {'path': s['raw_zip_path'], 'present': present,
                             'sha256_verified': (sha256_file(path) == s['content_sha256']) if present and verify_archives else None,
-                            'provenance_sidecar': sidecar.is_file()}})
+                            'provenance_sidecar': sidecar.is_file()},
+                'provenance_kind': classify({**s, 'raw_zip_path': str(path)},
+                                            synthetic=str(src['publisher']).startswith('SYNTHETIC'))['kind']})
         out['sources'].append({'source_id': src['source_id'], 'publisher': src['publisher'],
                                'selected_snapshot_id': selected, 'snapshots': items})
     for s in snaps:
@@ -659,21 +663,28 @@ def _stage_input(zip_path) -> tuple[Path, Path, Path]:
 
 
 def plan_import(target: Target, zip_path, source_id: str, *, archive_dir=None, new_source=False,
-                synthetic=False, catalog_data=None) -> dict:
+                synthetic=False, catalog_data=None, archive=False, providers=None) -> dict:
     """Read-only preview: verify a private copy of the ZIP and its provenance."""
     _check_source(source_id)
     original, staged, folder = _stage_input(zip_path)
     try:
         return _plan_staged(target, staged, original, source_id, archive_dir=archive_dir, new_source=new_source,
-                            synthetic=synthetic, catalog_data=catalog_data)
+                            synthetic=synthetic, catalog_data=catalog_data, archive=archive, providers=providers)
     finally:
         shutil.rmtree(folder, ignore_errors=True)
 
 
 def _plan_staged(target: Target, zip_path: Path, original: Path, source_id: str, *, archive_dir=None,
-                 new_source=False, synthetic=False, catalog_data=None) -> dict:
-    """Verify the staged copy ``zip_path``; report ``original`` as the input."""
-    entries = (catalog_data or catalog())['sources']
+                 new_source=False, synthetic=False, catalog_data=None, archive=False, providers=None) -> dict:
+    """Verify the staged copy ``zip_path``; report ``original`` as the input.
+
+    ``archive`` (Phase 7C, ``--archive-provenance``) accepts only a third-party archive
+    record, validated by ``archive_provenance.archive_problems``; without it such a
+    record is refused, so an archived copy can never pass as an official download.
+    """
+    archive_mode = archive  # ``archive`` is reused below for the archive path
+    cat = catalog_data or catalog()
+    entries = cat['sources']
     entry = entries.get(source_id)
     problems = []
     digest, size = sha256_file(zip_path), zip_path.stat().st_size
@@ -694,6 +705,9 @@ def _plan_staged(target: Target, zip_path: Path, original: Path, source_id: str,
             problems.append(f'GTFS validation failed: {exc}')
     sidecar = zip_path.with_suffix(zip_path.suffix + '.provenance.json')
     provenance = None
+    sha1 = sha1_file(zip_path) if archive_mode else None
+    if synthetic and archive_mode:
+        problems.append('--synthetic and --archive-provenance contradict each other')
     if synthetic:
         if entry is not None:
             problems.append(f'{source_id!r} is an official catalog source; --synthetic is not allowed for it')
@@ -701,13 +715,25 @@ def _plan_staged(target: Target, zip_path: Path, original: Path, source_id: str,
             problems.append('--synthetic given but a provenance sidecar exists; refusing the contradiction')
     elif not sidecar.exists():
         problems.append(f'no provenance sidecar {sidecar.name}; real feeds require one '
-                        '(use --synthetic only for invented test fixtures)')
+                        + ('(an archive provenance record for --archive-provenance)' if archive_mode
+                           else '(use --synthetic only for invented test fixtures)'))
     else:
         try:
             provenance = json.loads(sidecar.read_text(encoding='utf-8-sig'))
-            problems += _provenance_problems(provenance, source_id, digest, size, entry)
         except ValueError as exc:
             problems.append(f'provenance sidecar unreadable: {exc}')
+        else:
+            if archive_mode:
+                problems += archive_problems(provenance, source_id=source_id, sha256=digest, sha1=sha1, size=size,
+                                             entry=entry, catalog_license=cat.get('license'),
+                                             providers=providers if providers is not None else load_providers())
+            elif is_archive_record(provenance):
+                problems.append('the sidecar is a third-party archive record; pass --archive-provenance to import '
+                                'it as an archived copy (it can never pass as an official download)')
+            elif not isinstance(provenance, dict):
+                problems.append('provenance sidecar must be a JSON object')
+            else:
+                problems += _provenance_problems(provenance, source_id, digest, size, entry)
     con = open_readonly(target)
     try:
         state = logical_state(con)
@@ -755,6 +781,8 @@ def _plan_staged(target: Target, zip_path: Path, original: Path, source_id: str,
     return {'database': target.describe(), 'source_id': source_id, 'zip': str(original),
             'verified_copy': str(zip_path), 'sha256': digest,
             'bytes': size, 'synthetic': synthetic, 'provenance': provenance, 'counts': counts,
+            'provenance_kind': THIRD_PARTY if archive_mode else SYNTHETIC if synthetic else PUBLISHER_DIRECT,
+            'sha1': sha1,
             'new_source': source is None, 'action': action,
             'snapshot_id': existing['snapshot_id'] if existing else snapshot_id,
             'archive_dir': None if archive_dir is None else str(archive_dir),
@@ -768,21 +796,22 @@ def _plan_staged(target: Target, zip_path: Path, original: Path, source_id: str,
 
 def apply_import(target: Target, zip_path, source_id: str, *, archive_dir=None, new_source=False, synthetic=False,
                  backup_root=DEFAULT_BACKUPS, services_record=DEFAULT, catalog_data=None,
-                 copy=shutil.copyfile, importer=import_file) -> dict:
+                 copy=shutil.copyfile, importer=import_file, archive=False, providers=None) -> dict:
     _check_source(source_id)
     original, staged, folder = _stage_input(zip_path)
     try:
         return _apply_staged(target, staged, original, source_id, archive_dir=archive_dir, new_source=new_source,
                              synthetic=synthetic, backup_root=backup_root, services_record=services_record,
-                             catalog_data=catalog_data, copy=copy, importer=importer)
+                             catalog_data=catalog_data, copy=copy, importer=importer, archive=archive,
+                             providers=providers)
     finally:
         shutil.rmtree(folder, ignore_errors=True)
 
 
 def _apply_staged(target, staged, original, source_id, *, archive_dir, new_source, synthetic, backup_root,
-                  services_record, catalog_data, copy, importer) -> dict:
+                  services_record, catalog_data, copy, importer, archive=False, providers=None) -> dict:
     plan = _plan_staged(target, staged, original, source_id, archive_dir=archive_dir, new_source=new_source,
-                        synthetic=synthetic, catalog_data=catalog_data)
+                        synthetic=synthetic, catalog_data=catalog_data, archive=archive, providers=providers)
     if plan['problems']:
         raise AdminError('Refusing import: ' + '; '.join(plan['problems']))
     if plan['action'] == 'existing':
@@ -799,13 +828,19 @@ def _apply_staged(target, staged, original, source_id, *, archive_dir, new_sourc
         if found != plan['provenance']:
             raise AdminError('Verified provenance copy changed before import; nothing was changed.')
         before = logical_state(con)
+        url_before = _one(con, 'SELECT download_url FROM feed_sources WHERE source_id=?', (source_id,))
         # Stored archive paths follow the database's existing convention; a relative
         # archive root (the real DB uses data\raw) is relative to the repository root.
         with contextlib.chdir(ROOT):
+            extra = {'archive_provenance': True} if archive else {}
             result = importer(con, staged, source_id=source_id, archive_dir=plan['archive_dir'],
                               publisher=plan['publisher'], landing_url=entry.get('landing_url'), activate=False,
-                              expected_sha256=plan['sha256'])
+                              expected_sha256=plan['sha256'], **extra)
         after = logical_state(con)
+        url_after = _one(con, 'SELECT download_url FROM feed_sources WHERE source_id=?', (source_id,))
+        if archive and url_before is not None and url_after != url_before:
+            raise AdminError("INVARIANT VIOLATION: an archived copy changed the source's official download URL; "
+                             'restore from the backup listed above.')
         if after['selection'] != before['selection']:
             raise AdminError('INVARIANT VIOLATION: selection changed during a preserve-selection import; '
                              'restore from the backup listed above.')

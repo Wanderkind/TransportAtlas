@@ -14,6 +14,10 @@ importer for v2 (services must be stopped; backups go to data/history-demo/backu
   legacy     v1, v2, other via import_file(activate=True)  -> v2 current (default)
   preserved  v1, other bootstrapped; v2 via manage_snapshots import  -> v1 stays current
   activated  as preserved, then activate v2 with --expected-current v1  -> v2 current
+  archived   Phase 7C: v2 and other bootstrapped (v2 with an invented publisher-direct
+             record); then the OLDER v1 imported with --archive-provenance from the
+             invented "SYNTHETIC Example Archive" (observed 2026-08-28, obtained now)
+             -> v2 stays current. Mirrors the shape of the ASPO case without any real data.
 """
 from __future__ import annotations
 import argparse
@@ -29,7 +33,7 @@ sys.path[:0] = [str(ROOT/'backend'), str(ROOT/'backend'/'tests')]
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--folder', type=Path, default=DEMO)
-    parser.add_argument('--admin-stage', choices=['legacy', 'preserved', 'activated'], default='legacy')
+    parser.add_argument('--admin-stage', choices=['legacy', 'preserved', 'activated', 'archived'], default='legacy')
     args = parser.parse_args(argv)
     folder = args.folder.resolve()
     if folder != DEMO.resolve():
@@ -43,6 +47,20 @@ def main(argv=None) -> int:
     try:
         if args.admin_stage == 'legacy':
             ids = hf.import_all(con, folder/'zips', folder/'raw')
+        elif args.admin_stage == 'archived':
+            import json
+            from datetime import datetime, timezone
+            from transport_atlas.admin import sha256_file
+            from transport_atlas.ingest import import_file
+            paths = hf.build(folder/'zips')
+            now = datetime.now(timezone.utc).isoformat()
+            Path(str(paths['v2']) + '.provenance.json').write_text(json.dumps({
+                'source_id': hf.SOURCE, 'sha256': sha256_file(paths['v2']), 'retrieved_at': now,
+                'download_url': 'https://publisher.example.test/synthetic_valley/gtfs.zip',
+                'landing_url': 'https://publisher.example.test/synthetic_valley/'}, indent=2), encoding='utf-8')
+            ids = {key: import_file(con, paths[key], source_id=source, archive_dir=folder/'raw',
+                                    publisher='SYNTHETIC fixture (not a real operator)')['snapshot_id']
+                   for key, source in (('v2', hf.SOURCE), ('other', hf.OTHER_SOURCE))}
         else:
             from transport_atlas.ingest import import_file
             paths = hf.build(folder/'zips')
@@ -51,7 +69,24 @@ def main(argv=None) -> int:
                    for key, source in (('v1', hf.SOURCE), ('other', hf.OTHER_SOURCE))}
     finally:
         con.close()
-    if args.admin_stage != 'legacy':
+    if args.admin_stage == 'archived':
+        import archive_fixtures as af
+        from datetime import datetime, timezone
+        from transport_atlas import admin
+        target = admin.resolve_database(db)
+        incoming = folder/'incoming'
+        incoming.mkdir()
+        older = incoming/'synthetic_valley_v1.zip'
+        shutil.copyfile(folder/'zips'/'synthetic_valley_v1.zip', older)
+        publisher = 'SYNTHETIC fixture (not a real operator)'
+        af.write(older, af.record(older, hf.SOURCE, publisher, sha256=admin.sha256_file(older),
+                                  retrieved_at=datetime.now(timezone.utc).isoformat(),
+                                  observed_at='2026-08-28T06:00:00+00:00'))
+        out = admin.apply_import(target, older, hf.SOURCE, archive=True, providers=af.PROVIDERS,
+                                 catalog_data=af.catalog(hf.SOURCE, publisher), backup_root=folder/'backups')
+        ids['v1'] = out['result']['snapshot_id']
+        print(f"  admin archive import v1 (selection preserved): backup {out['backup']['backup_file']}")
+    elif args.admin_stage != 'legacy':
         from transport_atlas import admin
         target = admin.resolve_database(db)
         out = admin.apply_import(target, folder/'zips'/'synthetic_valley_v2.zip', hf.SOURCE, synthetic=True,

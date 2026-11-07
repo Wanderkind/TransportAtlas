@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useState} from 'react';
-import type {ComparisonRequest, HistoryRecord, HistorySource, MetricDelta, RecordPage, SnapshotComparison, SnapshotInventory, SnapshotItem} from './api';
+import type {ComparisonRequest, HistoryRecord, HistorySource, InventorySort, MetricDelta, ProvenanceKind, RecordPage, SnapshotComparison, SnapshotInventory, SnapshotItem, SnapshotProvenance} from './api';
 import {historyEndpoints} from './api';
 import {useKeyedRequest} from './useKeyedRequest';
 
@@ -19,12 +19,30 @@ function Metric({m}:{m:MetricDelta}){
  return <><td>{fmt(m.baseline)}</td><td>{fmt(m.comparison)}</td><td>{m.delta!>0?'+':''}{m.delta}</td><td title={m.percent_note}>{m.percent_change===null?(m.baseline===0&&m.delta?'undefined (zero baseline)':'—'):`${m.percent_change>0?'+':''}${m.percent_change}%`}</td></>;
 }
 
+// Phase 7C: how each copy was obtained. An archived copy is attributed to its archive, never to a download of ours.
+const KIND_SHORT:Record<ProvenanceKind,string>={publisher_direct:'Publisher download',third_party_archived:'Archived copy',synthetic:'Synthetic fixture',unknown_legacy:'Unknown provenance'};
+const BASIS:Record<SnapshotProvenance['observation_basis'],string>={archive_record:'per the archive record',local_retrieval:'our own download',unknown:'not recorded'};
+const day=(v:string|null|undefined)=>v?v.slice(0,10):'unknown';
+
+function ProvenanceCell({p}:{p:SnapshotProvenance}){
+ return <td data-field="provenance" data-provenance-kind={p.kind} title={p.label}>
+  <b>{KIND_SHORT[p.kind]}</b>{p.synthetic&&p.kind!=='synthetic'&&<em className="status-tag">synthetic</em>}
+  {p.kind==='third_party_archived'&&p.archive&&<small data-field="archive-provider">from {p.archive.provider_name??p.archive.provider} · archive version {p.archive.version_id?.slice(0,8)??'—'} · originally published by {p.publisher.name??'unknown publisher'}; not downloaded from the publisher by this computer</small>}
+  {p.kind==='publisher_direct'&&<small>downloaded by this computer from the publisher's URL</small>}
+  {p.kind==='unknown_legacy'&&<small>No usable provenance record; shown as unknown, not inferred.</small>}
+  {p.license?.name&&<small data-field="license">{p.license.name}{p.license.attribution?` · ${p.license.attribution}`:''}</small>}
+  {p.problem&&<small className="caution-text">{p.problem}</small>}
+ </td>;
+}
+
 function SnapshotTable({items,date}:{items:SnapshotItem[];date:string}){
  return <div className="table-scroll"><table className="history-table snapshots" aria-label="Archived snapshots">
-  <thead><tr><th>Snapshot</th><th>Retrieved (local copy)</th><th>Publisher version label</th><th>Declared validity</th><th>Calendar coverage</th><th>{date} in coverage</th><th>Counts</th><th>Archive</th><th>Validation</th></tr></thead>
+  <thead><tr><th>Snapshot</th><th>How obtained</th><th title="When the feed was observed being published: per the archive record for archived copies, or our own download">Observed published</th><th title="When this computer obtained the copy">Obtained locally</th><th>Publisher version label</th><th>Declared validity</th><th>Calendar coverage</th><th>{date} in coverage</th><th>Counts</th><th>Archive</th><th>Validation</th></tr></thead>
   <tbody>{items.map(s=><tr key={s.snapshot_id} data-snapshot-id={s.snapshot_id} data-selected={s.selected?'true':'false'} className={s.comparable?'':'not-comparable'}>
    <td><code>{short(s.snapshot_id)}</code>{s.selected&&<em className="current-tag">current atlas</em>}{!s.comparable&&<em className="status-tag">{s.import_status}</em>}</td>
-   <td>{s.retrieved_at.slice(0,19).replace('T',' ')}</td>
+   <ProvenanceCell p={s.provenance}/>
+   <td data-field="observed">{s.observed_at?day(s.observed_at):'Unknown'}<small>{BASIS[s.observation_basis]}</small></td>
+   <td data-field="retrieved">{s.retrieved_at.slice(0,19).replace('T',' ')}</td>
    <td>{s.feed_info.present===false?'Unknown (no feed_info.txt)':s.feed_info.feed_version??'Not supplied'}</td>
    <td>{s.feed_info.declared_start||s.feed_info.declared_end?`${s.feed_info.declared_start??'—'} – ${s.feed_info.declared_end??'—'}`:'Not declared'}</td>
    <td>{s.observed_coverage.start??'—'} – {s.observed_coverage.end??'—'}</td>
@@ -88,8 +106,8 @@ function Comparison({request}:{request:ComparisonRequest}){
   <h3>{differentDates?'Feed version and service date comparison':'Feed version comparison on one service date'}</h3>
   <div className="sides">{([['Baseline',c.baseline],['Comparison',c.comparison]] as const).map(([label,s])=><div key={label} className="side" data-side={label.toLowerCase()} data-in-coverage={String(s.date_in_coverage)}>
    <b>{label}</b> <code>{short(s.snapshot_id)}</code><span>Service date {s.service_date} · calendars {s.observed_coverage.start} – {s.observed_coverage.end}</span>
-   <span>Retrieved {s.retrieved_at.slice(0,10)} (retrieval, not publication)</span>{!s.date_in_coverage&&<span className="caution-text">{s.reason}</span>}</div>)}</div>
-  {c.notices.map(n=><p key={n.code} className="quality-item caution history-notice" data-notice={n.code}>{n.text}</p>)}
+   <span data-field="side-provenance" data-provenance-kind={s.provenance.kind}>{KIND_SHORT[s.provenance.kind]}{s.provenance.kind==='third_party_archived'&&s.provenance.archive?` from ${s.provenance.archive.provider_name??s.provenance.archive.provider}`:''} · observed {day(s.observed_at)} · obtained locally {s.retrieved_at.slice(0,10)} (neither is a publication or service date)</span>{!s.date_in_coverage&&<span className="caution-text">{s.reason}</span>}</div>)}</div>
+  {c.notices.map(n=><p key={n.code} className={`quality-item ${n.level==='info'?'info':'caution'} history-notice`} data-notice={n.code}>{n.text}</p>)}
   <div className="table-scroll"><table className="history-table summary" aria-label="Summary metrics"><thead><tr><th>Metric</th><th>Baseline</th><th>Comparison</th><th>Change</th><th>% of baseline</th></tr></thead>
    <tbody>{SUMMARY.map(([k,label,dated])=>c.summary[k]&&<tr key={k} data-metric={k} data-metric-status={c.summary[k].status}><td title={c.definitions[k]??''}>{label}{dated&&<small> (date-dependent)</small>}</td><Metric m={c.summary[k]}/></tr>)}</tbody></table></div>
   <p className="muted">Shape IDs: {Object.entries(c.shapes.counts).map(([k,v])=>`${v} ${k}`).join(' · ')}. {c.shapes.note}</p>
@@ -107,7 +125,8 @@ export function History({date,onClose}:{date:string;onClose:()=>void}){
  const [source,setSource]=useState('');
  const chosen=source||sources.find(s=>s.comparison_possible)?.source_id||sources[0]?.source_id||'';
  const [inventoryDate,setInventoryDate]=useState(date);
- const inventory=useKeyedRequest<SnapshotInventory>(chosen?historyEndpoints.snapshots(chosen,inventoryDate):null,`${chosen}|${inventoryDate}|inventory`);
+ const [sort,setSort]=useState<InventorySort>('observed');
+ const inventory=useKeyedRequest<SnapshotInventory>(chosen?historyEndpoints.snapshots(chosen,inventoryDate,sort):null,`${chosen}|${inventoryDate}|${sort}|inventory`);
  const ready=useMemo(()=>inventory.data?.snapshots.filter(s=>s.comparable)??[],[inventory.data]);
  const [form,setForm]=useState<ComparisonRequest|null>(null);
  const defaults:ComparisonRequest|null=ready.length>=2?{source:chosen,baseline:ready[0].snapshot_id,comparison:ready.at(-1)!.snapshot_id,policy:'same_date',date:inventoryDate,baselineDate:inventoryDate,comparisonDate:inventoryDate}:null;
@@ -118,21 +137,24 @@ export function History({date,onClose}:{date:string;onClose:()=>void}){
  const stale=shown&&current&&JSON.stringify(shown)!==JSON.stringify(current);
  return <div className="history-view" data-view="history">
   <div className="history-header"><div><h2>History · compare archived feed snapshots</h2>
-   <p className="muted">Read-only. Browsing or comparing snapshots never changes the snapshots used by the atlas. Feed retrieval time, publisher version and GTFS service date are kept separate.</p></div>
+   <p className="muted">Read-only. Browsing or comparing snapshots never changes the snapshots used by the atlas. How each copy was obtained, when it was observed published, when this computer obtained it, the publisher's version label and the GTFS service date are kept separate.</p></div>
    <button type="button" className="back-to-atlas" onClick={onClose}>← Back to atlas</button></div>
   {sourcesRequest.error&&<p role="alert">Sources unavailable: {sourcesRequest.error}</p>}
   <div className="history-controls">
    <label>Operator <select aria-label="History operator" value={chosen} onChange={e=>{setSource(e.target.value);setForm(null);setSubmitted(null)}}>
     {sources.map(s=><option key={s.source_id} value={s.source_id}>{s.source_id} ({s.ready_snapshots} snapshot{s.ready_snapshots===1?'':'s'})</option>)}</select></label>
    <label>Coverage check date <input aria-label="Coverage check date" type="date" value={inventoryDate} onChange={e=>setInventoryDate(e.target.value)}/></label>
+   <label>Order snapshots by <select aria-label="Snapshot order" value={sort} onChange={e=>setSort(e.target.value as InventorySort)}>
+    <option value="observed">Observation time (when seen published)</option><option value="retrieved">Local retrieval time (when obtained here)</option></select></label>
   </div>
   {inventory.error?<p role="alert">Snapshots unavailable: {inventory.error} <button type="button" onClick={inventory.retry}>Retry</button></p>
    :!inventory.data?<p role="status">Loading archived snapshots…</p>:<>
    <SnapshotTable items={inventory.data.snapshots} date={inventoryDate}/>
+   <p className="muted sort-note" data-sort={inventory.data.sort}>{inventory.data.sort_note}</p>
    <p className={inventory.data.comparison_possible?'muted':'quality-item info single-snapshot'} data-comparison-possible={String(inventory.data.comparison_possible)}>{inventory.data.note}</p>
    {current&&<form className="compare-form" onSubmit={e=>{e.preventDefault();setSubmitted(current)}}>
-    <label>Baseline <select aria-label="Baseline snapshot" value={current.baseline} onChange={e=>update({baseline:e.target.value})}>{ready.map(s=><option key={s.snapshot_id} value={s.snapshot_id}>{short(s.snapshot_id)} · {s.feed_info.feed_version??'no version label'} · retrieved {s.retrieved_at.slice(0,10)}</option>)}</select></label>
-    <label>Comparison <select aria-label="Comparison snapshot" value={current.comparison} onChange={e=>update({comparison:e.target.value})}>{ready.map(s=><option key={s.snapshot_id} value={s.snapshot_id}>{short(s.snapshot_id)} · {s.feed_info.feed_version??'no version label'} · retrieved {s.retrieved_at.slice(0,10)}</option>)}</select></label>
+    <label>Baseline <select aria-label="Baseline snapshot" value={current.baseline} onChange={e=>update({baseline:e.target.value})}>{ready.map(s=><option key={s.snapshot_id} value={s.snapshot_id}>{short(s.snapshot_id)} · {s.feed_info.feed_version??'no version label'} · {KIND_SHORT[s.provenance.kind]} · observed {day(s.observed_at)} · obtained {s.retrieved_at.slice(0,10)}</option>)}</select></label>
+    <label>Comparison <select aria-label="Comparison snapshot" value={current.comparison} onChange={e=>update({comparison:e.target.value})}>{ready.map(s=><option key={s.snapshot_id} value={s.snapshot_id}>{short(s.snapshot_id)} · {s.feed_info.feed_version??'no version label'} · {KIND_SHORT[s.provenance.kind]} · observed {day(s.observed_at)} · obtained {s.retrieved_at.slice(0,10)}</option>)}</select></label>
     <fieldset><legend>Service-date policy</legend>
      <label><input type="radio" name="policy" aria-label="Same service date" checked={current.policy==='same_date'} onChange={()=>update({policy:'same_date'})}/> Same service date in both (feed version change only)</label>
      <label><input type="radio" name="policy" aria-label="Different service dates" checked={current.policy==='different_dates'} onChange={()=>update({policy:'different_dates'})}/> Two different service dates (version <em>and</em> date change)</label>

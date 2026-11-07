@@ -1,4 +1,4 @@
-"""Guarded snapshot administration for a TransportAtlas database (Phase 7A).
+"""Guarded snapshot administration for a TransportAtlas database (Phase 7A, 7C).
 
 Every command is a read-only preview unless --apply is given. Mutations require the
 local services to be stopped, take and verify a backup first, and never change the
@@ -6,6 +6,8 @@ atlas selection except through `activate` / `restore` with an expected-current c
 
   status          list sources, snapshots, selection, archives (read-only)
   import          import an existing local ZIP WITHOUT selecting it
+                  (--archive-provenance: a copy obtained from a third-party archive,
+                  attributed to that archive; see docs/PHASE7C_ARCHIVE_PROVENANCE.md)
   activate        select a ready snapshot (or `none`) given --expected-current
   restore         undo the most recent journaled selection change of a source
   verify-backup   re-hash a backup and compare it with its record (read-only)
@@ -59,7 +61,8 @@ def _status_text(report):
                 arch += ' (hash verified)'
             print(f"  {mark} {s['snapshot_id']}  sha256 {s['short_sha256']}  {s['import_status']:<7} "
                   f"coverage {s['coverage']['start']}..{s['coverage']['end']}  "
-                  f"version {s['feed_version'] or '-'}  retrieved {s['retrieved_at']}  {arch}"
+                  f"version {s['feed_version'] or '-'}  retrieved {s['retrieved_at']}  {arch}  "
+                  f"provenance {s.get('provenance_kind', '-')}"
                   f"{'' if s['archive']['provenance_sidecar'] else '  (no provenance sidecar)'}")
             print(f"      full sha256 {s['content_sha256']}")
     print(f"\nArchive roots: {', '.join(report['archive_dirs']) or 'none'}")
@@ -103,6 +106,10 @@ def main(argv=None) -> int:
     sp.add_argument('--new-source', action='store_true', help='Allow a source not yet in this database')
     sp.add_argument('--synthetic', action='store_true',
                     help='Invented test fixture without provenance (refused for official catalog sources)')
+    sp.add_argument('--archive-provenance', action='store_true',
+                    help='The ZIP came from a third-party archive (e.g. Transitland): require and validate a '
+                         'third-party archive provenance record (configs/archive_providers.json). Never '
+                         'updates the source official download URL; never activates.')
 
     sp = sub.add_parser('activate', help='Select a ready snapshot for the atlas')
     common(sp)
@@ -147,7 +154,8 @@ def main(argv=None) -> int:
             return 0
         _confirm_real(target, args)
         if args.command == 'import':
-            kw = dict(archive_dir=args.archive_dir, new_source=args.new_source, synthetic=args.synthetic)
+            kw = dict(archive_dir=args.archive_dir, new_source=args.new_source, synthetic=args.synthetic,
+                      archive=args.archive_provenance)
             if args.apply:
                 result = admin.apply_import(target, args.zip, args.source, backup_root=args.backup_dir, **kw)
             else:
