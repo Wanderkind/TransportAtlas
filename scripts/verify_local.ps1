@@ -37,5 +37,9 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Delayed/error/filter-race browser checks failed' }
         Invoke-Native { & $python scripts/smoke_quality_ui.py }
         if ($LASTEXITCODE -ne 0) { throw 'Data-quality indicator browser checks failed' }
+        # Against the real database this checks the one-snapshot History view; against
+        # data/history-demo/history_demo.duckdb it runs the full synthetic comparison.
+        Invoke-Native { & $python scripts/smoke_history_ui.py }
+        if ($LASTEXITCODE -ne 0) { throw 'History view browser checks failed' }
     }
 } finally { Pop-Location }

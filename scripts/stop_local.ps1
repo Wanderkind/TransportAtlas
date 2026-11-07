@@ -11,7 +11,11 @@ foreach ($service in $state.services) {
         throw "PID $($service.id) no longer matches this checkout's $($service.name); refusing to stop it."
     }
     # The Windows venv launcher can own a separate Python child process.
-    & taskkill.exe /PID $service.id /T /F 2>$null | Out-Null
+    # PowerShell 5.1 turns taskkill's stderr (e.g. a child that already exited) into a
+    # terminating error under 'Stop'; judge success by whether the process survived.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & taskkill.exe /PID $service.id /T /F 2>$null | Out-Null } finally { $ErrorActionPreference = $previous }
     if ($LASTEXITCODE -ne 0 -and (Get-Process -Id $service.id -ErrorAction SilentlyContinue)) {
         throw "Could not stop $($service.name) process tree."
     }

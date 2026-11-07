@@ -1,5 +1,7 @@
 # Phase 5 — Data quality and reliability indicators
 
+> Historical record (accepted). The current phase is [Phase 6](PHASE6_HISTORICAL_SNAPSHOTS.md).
+
 Baseline: `codex/local-real-feed-atlas` at `7bb2629` (Phase 4). The checkout matched
 it at the start; only the unrelated untracked `PHASE4_APPLY.md` and
 `codex-phase3f-review.patch` were present and remain untouched.

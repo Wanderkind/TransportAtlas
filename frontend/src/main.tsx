@@ -15,6 +15,7 @@ import {installDiagnostics} from './diagnostics';
 import {useKeyedRequest} from './useKeyedRequest';
 import {CoveragePanel} from './CoveragePanel';
 import {SourceGate} from './sourceGate';
+import {History} from './History';
 maplibregl.setWorkerUrl(workerUrl);
 
 const STREETS_STYLE='https://tiles.openfreemap.org/styles/liberty';
@@ -85,6 +86,14 @@ function fitNetwork(m:MlMap,net:NetworkGeometry,stops:Stop[]){
 const EMPTY_NETWORK=emptyNetwork(),EMPTY_STOPS:Stop[]=[],EMPTY_ROUTES:Route[]=[],EMPTY_SNAPSHOTS:Snapshot[]=[];
 function App(){
  const [date,setDate]=useState(todayISO());
+ // History is a separate read-only view; the atlas stays mounted (state kept) while hidden.
+ const [view,setView]=useState<'atlas'|'history'>(new URLSearchParams(location.search).get('view')==='history'?'history':'atlas');
+ useEffect(()=>{
+   const url=new URL(location.href);
+   if(view==='history')url.searchParams.set('view','history');else url.searchParams.delete('view');
+   window.history.replaceState(null,'',url);
+   if(view==='atlas')requestAnimationFrame(()=>map.current?.resize());
+ },[view]);
  const [mode,setMode]=useState('all'),[source,setSource]=useState(''),[search,setSearch]=useState(''),[activeOnly,setActiveOnly]=useState(true);
  const [hiddenSources,setHiddenSources]=useState<string[]>([]),[stopSearch,setStopSearch]=useState('');
  const snapshotRequest=useKeyedRequest<Snapshot[]>(endpoints.snapshots,'snapshots');
@@ -194,10 +203,12 @@ function App(){
  return <div className="app">
   <header><div className="brand"><TrainFront size={23}/><strong>Transport Atlas</strong><span className="brand-sub">Research workspace</span></div>
    <div className="top-controls"><span className="region"><MapPinned size={16}/> Imported networks</span>
+    <button type="button" className={'history-toggle'+(view==='history'?' active':'')} aria-pressed={view==='history'} onClick={()=>setView(v=>v==='history'?'atlas':'history')}><Clock3 size={15}/> {view==='history'?'Atlas':'History'}</button>
     <label className="date"><CalendarDays size={16}/><input aria-label="Service date" type="date" value={date} onChange={e=>setDate(e.target.value)}/></label>
     <span className="local-tag">LOCAL</span></div>
   </header>
-  <div className="workspace">
+  {view==='history'&&<History date={date} onClose={()=>setView('atlas')}/>}
+  <div className="workspace" hidden={view==='history'}>
    <aside className="sidebar"><div className="sidebar-heading"><Layers3 size={17}/> Network explorer</div>
     <label className="search"><Search size={16}/><input aria-label="Search routes" placeholder="Find route or operator..." value={search} onChange={e=>setSearch(e.target.value)}/></label>
     <div className="category"><span className="field-label">SOURCE / OPERATOR</span>

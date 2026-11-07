@@ -1,8 +1,23 @@
 # Implementation status — Windows local development, 2026-11-07
 
-## Current: Phase 5 data-quality indicators
+## Current: Phase 6 historical snapshot inventory and comparison
 
-Phase 5 (local commits on `codex/local-real-feed-atlas`, not pushed) adds
+Phase 6 (local commits, not pushed) adds a read-only **History** view and
+`/api/v1/history/...` endpoints:
+- an inventory of all archived snapshots per operator, with retrieval time,
+  version label, declared validity, calendar coverage, counts, archive state and
+  hash-matched validation;
+- a comparison of two snapshots of one operator under an explicit service-date
+  policy (`same_date` or `different_dates`), with ID-level record differences.
+
+Browsing history never changes `selection_members`. **Real longitudinal comparison
+is not yet possible**: each of the four operators has exactly one imported
+version. The feature was verified with synthetic two-version feeds. See
+[PHASE6_HISTORICAL_SNAPSHOTS.md](PHASE6_HISTORICAL_SNAPSHOTS.md).
+
+## Historical: Phase 5 data-quality indicators
+
+Phase 5 (accepted; commits `1d231ed`, `589b0a7`) adds
 source-backed data-quality indicators without changing provider data, schemas
 or the map: nearby-stop service status, implausible stop-to-stop interval
 warnings, and a source inspector that separates retrieval, version label,
@@ -284,7 +299,9 @@ remain ignored. The README documents fresh installation and imports.
    feed freshness/coverage, validation summary). Still open: normalize more
    optional fields (a separate migration phase), shape-distance-aware checks, and
    complete licensing/attribution metadata.
-4. Add historical snapshot-selection controls, exports, physical-stop matching and
+   Done Phase 6: historical snapshot inventory and comparison (synthetic-verified;
+   real comparison awaits a second authorized import per operator).
+4. Add exports, physical-stop matching and
    connectivity/accessibility analysis, then validate a second country/region.
 
 Suitable for local research exploration. Provider schedule accuracy, route coverage

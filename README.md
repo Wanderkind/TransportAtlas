@@ -166,6 +166,27 @@ physical-stop match, walking route or guaranteed transfer. It also lists the
 trip templates calling there on the selected service day; clicking one opens it
 when the current filters can display it.
 
+**History / compare snapshots** (Phase 6,
+[details](docs/PHASE6_HISTORICAL_SNAPSHOTS.md)): the **History** button in the
+header (or `?view=history`) opens a read-only view.
+- It lists every archived snapshot of an operator: retrieval time, publisher
+  version label, declared validity, calendar coverage, counts and archive.
+- It compares two snapshots of the same operator on one service date, or on two
+  explicitly different dates, which is labelled as a version *and* date change.
+- It shows record-level additions, removals and changes by GTFS ID.
+
+Browsing history never changes the atlas's current snapshots. **Real longitudinal
+comparison is not yet possible**: each imported operator currently has exactly one
+version. To try the feature, run it on synthetic feeds:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/build_history_demo.py
+.\scripts\start_local.ps1 -Production -Database data/history-demo/history_demo.duckdb
+# http://127.0.0.1:5173/?view=history&date=2026-11-06
+.\.venv\Scripts\python.exe scripts/smoke_history_ui.py
+.\scripts\stop_local.ps1
+```
+
 **Data-quality indicators** (Phase 5, [details](docs/PHASE5_DATA_QUALITY.md))
 appear in the route, stop and source inspectors, never on the map. Click a source
 under *Service coverage by source* to open the source inspector.
@@ -201,6 +222,7 @@ npm run build --prefix frontend
 .\.venv\Scripts\python.exe scripts/smoke_real_ui.py
 .\.venv\Scripts\python.exe scripts/smoke_filter_races.py
 .\.venv\Scripts\python.exe scripts/smoke_quality_ui.py
+.\.venv\Scripts\python.exe scripts/smoke_history_ui.py
 ```
 
 Tests cover DuckDB, calendar exceptions, overnight/DST semantics, source isolation,
@@ -226,6 +248,7 @@ The older `scripts/smoke_ui.py` expects the fictional fixture and an isolated de
 | `data/local-verification/phase3/services/<run>/` | Unique backend/frontend launch logs |
 | `data/cache/network/` | Disposable, snapshot/filter-keyed serialized GeoJSON |
 | `data/cache/shapes/` | Disposable per-snapshot simplified shape levels (`<id>.json` + small `--` deltas) |
+| `data/history-demo/` | Disposable synthetic two-version demo database (`build_history_demo.py`) |
 | `data/cache/quality/` | Disposable per-snapshot feed-wide interval summaries (rule-versioned) |
 | `data/local-verification/phase4-validator/` | MobilityData validator reports (read by the source inspector) |
 | `.venv/`, `frontend/node_modules/`, `frontend/dist/` | Local environment/builds |
@@ -240,7 +263,8 @@ responses are pruned least-recently-used beyond 500 files or 1 GiB (override wit
 abandoned `.part` files older than an hour are removed. Cache files can be removed
 while services are stopped to force rebuilding.
 The application uses bounded GeoJSON, not national vector tiles. External
-MobilityData validation (Phase 4) and data-quality indicators (Phase 5) are done.
-Stop-board pagination, historical selection UI, exports,
+MobilityData validation (Phase 4), data-quality indicators (Phase 5) and a
+historical snapshot explorer (Phase 6; synthetic-verified) are done.
+Stop-board pagination, exports,
 physical-stop matching, connectivity/accessibility analysis and multi-country
 validation remain future milestones. See the [MVP specification](docs/MVP_SPEC.md).

@@ -16,6 +16,7 @@ from . import shape_store
 from .timetable import route_timetable
 from .nearby import nearby_stops, stop_routes
 from . import quality
+from .history import SnapshotHistory, HistoryError, NotFound
 from .provenance import declared_info
 from .network_cache import cache_key, read_cache, write_cache
 
@@ -26,6 +27,8 @@ def create_app(db_path: str | Path | None = None,backend: str | None = None):
     @asynccontextmanager
     async def lifespan(app):
         app.state.con=connect(target,backend)
+        # Read-only history service; never changes selection_members.
+        app.state.history=SnapshotHistory(app.state.con,validation_folder=target.parent/'local-verification'/'phase4-validator')
         try: yield
         finally: app.state.con.close()
     app=FastAPI(title='Transport Atlas',version='0.1.0',lifespan=lifespan)
@@ -262,6 +265,34 @@ def create_app(db_path: str | Path | None = None,backend: str | None = None):
         try:return stop_board(app.state.con,snapshot_id,stop_id,date_value,start_hour=start_hour,end_hour=end_hour)
         except KeyError:raise HTTPException(status_code=404,detail='Stop not found')
         except ValueError as exc:raise HTTPException(status_code=422,detail=str(exc))
+
+    @app.get('/api/v1/history/sources')
+    def history_sources():
+        return {'sources': app.state.history.sources()}
+
+    @app.get('/api/v1/history/{source_id}/snapshots')
+    def history_snapshots(source_id: str, date_value: date | None = Query(default=None, alias='date'),
+                          verify_archives: bool = False):
+        try:
+            return app.state.history.inventory(source_id, date_value, verify_archives=verify_archives)
+        except NotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0]))
+
+    @app.get('/api/v1/history/{source_id}/compare')
+    def history_compare(source_id: str, baseline: str, comparison: str, policy: str = 'same_date',
+                        date_value: date | None = Query(default=None, alias='date'),
+                        baseline_date: date | None = None, comparison_date: date | None = None,
+                        record_status: str = 'changed', record_limit: int = Query(default=100, ge=1, le=1000),
+                        record_offset: int = Query(default=0, ge=0)):
+        try:
+            return app.state.history.compare(source_id, baseline, comparison, policy=policy, service_date=date_value,
+                                             baseline_date=baseline_date, comparison_date=comparison_date,
+                                             record_status=record_status, record_limit=record_limit,
+                                             record_offset=record_offset)
+        except NotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0]))
+        except HistoryError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
 
     @app.get('/api/v1/trip/{snapshot_id}/{trip_id}')
     def trip(snapshot_id:str,trip_id:str):

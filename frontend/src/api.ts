@@ -48,3 +48,28 @@ export const endpoints={
  timetablePage:(r:Route,d:string,direction:string,variant:string,offset:number)=>`/api/v1/route/${q(r.snapshot_id)}/${q(r.route_id)}/timetable?date=${q(d)}&limit=200&offset=${offset}&direction=${q(direction)}&variant=${q(variant)}`,
  trip:(snapshot:string,trip:string)=>`/api/v1/trip/${q(snapshot)}/${q(trip)}`
 };
+
+// Phase 6: read-only historical snapshot inventory and comparison.
+export type HistorySource = {source_id:string;publisher:string;snapshots:number;ready_snapshots:number;selected_snapshot_id:string|null;comparison_possible:boolean};
+export type SnapshotCounts = {route_records:number;routes_with_trip_references:number;stop_records:number;stops_referenced_by_trips:number;trip_templates:number;shape_ids:number};
+export type SnapshotItem = {snapshot_id:string;source_id:string;content_sha256:string;import_status:string;selected:boolean;comparable:boolean;retrieved_at:string;retrieval_note:string;
+ archive:{path:string;present:boolean;bytes:number|null;sha256_verified:boolean|null};
+ feed_info:{present:boolean|null;publisher_name:string|null;feed_version:string|null;version_label_date:string|null;declared_start:string|null;declared_end:string|null};
+ observed_coverage:{start:string|null;end:string|null};validation:{validator_version:string;validation_date:string;errors:number;warnings:number;infos:number}|null;validation_note:string;
+ date_in_coverage?:boolean;counts?:SnapshotCounts};
+export type SnapshotInventory = {source_id:string;service_date:string|null;snapshots:SnapshotItem[];ready_snapshots:number;comparison_possible:boolean;note:string;identity_note:string};
+export type MetricDelta = {baseline:number|null;comparison:number|null;delta:number|null;percent_change:number|null;status:'unchanged'|'changed'|'incomparable';percent_note:string;attributable_to_feed_version?:boolean;metric?:string};
+export type FieldChange = {field:string;baseline:unknown;comparison:unknown;distance_m?:number};
+export type HistoryRecord = {id:string;status:'added'|'removed'|'modified'|'unchanged';changes:FieldChange[];baseline:Record<string,unknown>|null;comparison:Record<string,unknown>|null;service?:MetricDelta|null;moved_m?:number|null;served_on_date?:{baseline:boolean|null;comparison:boolean|null}};
+export type RecordPage = {counts:Record<string,number>;total:number;status_filter:string;matching:number;offset:number;limit:number;records:HistoryRecord[];truncated:boolean;next_offset:number|null};
+export type ComparisonSide = {snapshot_id:string;content_sha256:string;retrieved_at:string;observed_coverage:{start:string;end:string};service_date:string;date_in_coverage:boolean;reason:string|null};
+export type SnapshotComparison = {source_id:string;policy:'same_date'|'different_dates';baseline:ComparisonSide;comparison:ComparisonSide;synthetic:boolean;
+ notices:Array<{code:string;level:string;text:string}>;identity_note:string;definitions:Record<string,string>;summary:Record<string,MetricDelta>;
+ routes:RecordPage;stops:RecordPage;shapes:{counts:Record<string,number>;note:string}};
+export type ComparisonRequest = {source:string;baseline:string;comparison:string;policy:'same_date'|'different_dates';date:string;baselineDate:string;comparisonDate:string};
+export const historyEndpoints={
+ sources:'/api/v1/history/sources',
+ snapshots:(source:string,d:string)=>`/api/v1/history/${q(source)}/snapshots?date=${q(d)}`,
+ compare:(r:ComparisonRequest,status='changed',limit=100,offset=0)=>`/api/v1/history/${q(r.source)}/compare?baseline=${q(r.baseline)}&comparison=${q(r.comparison)}&policy=${r.policy}`+
+   (r.policy==='same_date'?`&date=${q(r.date)}`:`&baseline_date=${q(r.baselineDate)}&comparison_date=${q(r.comparisonDate)}`)+`&record_status=${q(status)}&record_limit=${limit}&record_offset=${offset}`,
+};

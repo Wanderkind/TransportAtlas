@@ -30,3 +30,18 @@
 .inspector p.stop-service{margin:4px 0;font-size:11px;color:#4f6274}.nearby-tally{font-size:10px}
 .freshness{width:100%;border-collapse:collapse;font-size:11px;margin:6px 0}.freshness th{text-align:left;font-weight:600;color:#5f7080;vertical-align:top;padding:4px 6px 4px 0;width:38%}.freshness td{padding:4px 0;color:#34495c;overflow-wrap:anywhere}.freshness td small{display:block;color:#93a1ad;font-size:10px}.freshness tr{border-bottom:1px solid #edf0f2}
 button.source-row{background:white;cursor:pointer;font:inherit;font-size:10px}button.source-row:hover,button.source-row.selected{background:#eef6fb;border-color:#b9d3e6}
+/* Phase 6 history explorer: tables, not maps; restrained like the inspectors. */
+.workspace[hidden]{display:none}
+.history-toggle{display:flex;align-items:center;gap:6px;border:1px solid #dbe4e9;background:white;border-radius:8px;padding:8px 11px;color:#2a628d;font-size:12px}.history-toggle.active{background:#2c608b;color:white;border-color:#2c608b}
+.history-view{flex:1;min-height:0;overflow:auto;padding:20px 26px;background:#f7f9fb;font-size:12px;color:#34495c}
+.history-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.history-header h2{margin:0 0 4px;font-size:20px;color:#29445d}.back-to-atlas{border:1px solid #b9d3e6;background:white;color:#225d88;border-radius:7px;padding:8px 12px}
+.history-controls,.compare-form{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin:14px 0}.history-controls label,.compare-form label{display:flex;flex-direction:column;gap:4px;font-weight:600;color:#5f7080}
+.compare-form{background:white;border:1px solid #e5ebef;border-radius:9px;padding:12px}.compare-form fieldset{border:0;padding:0;margin:0;display:flex;flex-direction:column;gap:4px}.compare-form fieldset label{flex-direction:row;font-weight:400}.compare-form legend{font-weight:600;color:#5f7080}
+.run-compare{background:#2c608b;color:white;border:0;border-radius:7px;padding:9px 14px}
+.table-scroll{overflow:auto;max-width:100%}.history-table{border-collapse:collapse;width:100%;background:white;font-size:11px;margin:8px 0}.history-table th{text-align:left;color:#5f7080;font-weight:600;border-bottom:1px solid #dbe4e9;padding:6px 8px;white-space:nowrap}.history-table td{border-bottom:1px solid #edf0f2;padding:6px 8px;vertical-align:top}
+.history-table tr.not-comparable{color:#93a1ad}.current-tag,.status-tag{display:inline-block;margin-left:6px;font-style:normal;font-size:9px;padding:1px 5px;border-radius:4px;background:#e4f5ee;color:#16745e}.status-tag{background:#f1f3f5;color:#7b8a98}
+.comparison{margin-top:10px}.comparison h3{font-size:15px;color:#29445d;margin:12px 0 6px}.sides{display:flex;gap:10px;flex-wrap:wrap}.side{background:white;border:1px solid #e5ebef;border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:2px;min-width:260px}
+.synthetic-banner{background:#eef3fb;border-left:3px solid #6b8fc9;padding:7px 9px;color:#3c5680;margin:8px 0}.history-notice{margin:6px 0}.caution-text{color:#9b6530}.incomparable{color:#7b6aa8}
+.record-table{margin-top:14px}.record-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.record-head h3{margin:0}.record-head label{margin-left:auto}
+.record-status{font-size:10px;padding:1px 6px;border-radius:4px;background:#f1f3f5;color:#5f7080}.record-status.added{background:#e4f5ee;color:#16745e}.record-status.removed{background:#fbecec;color:#9b3b3b}.record-status.modified{background:#fdf3e4;color:#9b6530}
+.field-changes{margin:0;padding-left:14px}.single-snapshot{margin:10px 0}.history-error{margin:10px 0}
