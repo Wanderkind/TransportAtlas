@@ -25,6 +25,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -626,13 +627,52 @@ def _provenance_problems(prov: dict, source_id: str, digest: str, size: int, ent
     return problems
 
 
+def _stage_input(zip_path) -> tuple[Path, Path, Path]:
+    """Copy the ZIP and its optional provenance sidecar into a new private folder.
+
+    Everything is then verified on, and imported from, this copy, so a change to the
+    caller's files after this point (e.g. a re-download into the same path during the
+    backup) cannot reach the database. A change *during* staging is detected by
+    hashing the original before and after the copy. Returns (original, staged, folder).
+    """
+    original = Path(zip_path).expanduser().resolve()
+    if not original.is_file():
+        raise AdminError(f'ZIP not found: {original}. Only existing local files are accepted (no downloads).')
+    folder = Path(tempfile.mkdtemp(prefix='transport-atlas-verified-input-'))
+    try:
+        staged = folder / original.name
+        side = original.with_suffix(original.suffix + '.provenance.json')
+        side_before = side.read_bytes() if side.is_file() else None
+        before = sha256_file(original)
+        shutil.copyfile(original, staged)
+        after = sha256_file(original)
+        side_after = side.read_bytes() if side.is_file() else None
+        if not (before == after == sha256_file(staged)) or side_before != side_after:
+            raise AdminError(f'{original} or its provenance changed while being staged for verification; '
+                             'nothing was changed. Retry once the file is stable.')
+        if side_before is not None:
+            staged.with_suffix(staged.suffix + '.provenance.json').write_bytes(side_before)
+        return original, staged, folder
+    except BaseException:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+
+
 def plan_import(target: Target, zip_path, source_id: str, *, archive_dir=None, new_source=False,
                 synthetic=False, catalog_data=None) -> dict:
-    """Read-only preview: verify the ZIP and its provenance, decide new vs existing."""
+    """Read-only preview: verify a private copy of the ZIP and its provenance."""
     _check_source(source_id)
-    zip_path = Path(zip_path).expanduser().resolve()
-    if not zip_path.is_file():
-        raise AdminError(f'ZIP not found: {zip_path}. Only existing local files are accepted (no downloads).')
+    original, staged, folder = _stage_input(zip_path)
+    try:
+        return _plan_staged(target, staged, original, source_id, archive_dir=archive_dir, new_source=new_source,
+                            synthetic=synthetic, catalog_data=catalog_data)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def _plan_staged(target: Target, zip_path: Path, original: Path, source_id: str, *, archive_dir=None,
+                 new_source=False, synthetic=False, catalog_data=None) -> dict:
+    """Verify the staged copy ``zip_path``; report ``original`` as the input."""
     entries = (catalog_data or catalog())['sources']
     entry = entries.get(source_id)
     problems = []
@@ -712,7 +752,8 @@ def plan_import(target: Target, zip_path, source_id: str, *, archive_dir=None, n
     if existing and existing['import_status'] != 'ready':
         problems.append(f'a {existing["import_status"]} snapshot with these bytes already exists ({existing["snapshot_id"]})')
     action = 'existing' if existing and existing['import_status'] == 'ready' else 'import'
-    return {'database': target.describe(), 'source_id': source_id, 'zip': str(zip_path), 'sha256': digest,
+    return {'database': target.describe(), 'source_id': source_id, 'zip': str(original),
+            'verified_copy': str(zip_path), 'sha256': digest,
             'bytes': size, 'synthetic': synthetic, 'provenance': provenance, 'counts': counts,
             'new_source': source is None, 'action': action,
             'snapshot_id': existing['snapshot_id'] if existing else snapshot_id,
@@ -728,8 +769,20 @@ def plan_import(target: Target, zip_path, source_id: str, *, archive_dir=None, n
 def apply_import(target: Target, zip_path, source_id: str, *, archive_dir=None, new_source=False, synthetic=False,
                  backup_root=DEFAULT_BACKUPS, services_record=DEFAULT, catalog_data=None,
                  copy=shutil.copyfile, importer=import_file) -> dict:
-    plan = plan_import(target, zip_path, source_id, archive_dir=archive_dir, new_source=new_source,
-                       synthetic=synthetic, catalog_data=catalog_data)
+    _check_source(source_id)
+    original, staged, folder = _stage_input(zip_path)
+    try:
+        return _apply_staged(target, staged, original, source_id, archive_dir=archive_dir, new_source=new_source,
+                             synthetic=synthetic, backup_root=backup_root, services_record=services_record,
+                             catalog_data=catalog_data, copy=copy, importer=importer)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def _apply_staged(target, staged, original, source_id, *, archive_dir, new_source, synthetic, backup_root,
+                  services_record, catalog_data, copy, importer) -> dict:
+    plan = _plan_staged(target, staged, original, source_id, archive_dir=archive_dir, new_source=new_source,
+                        synthetic=synthetic, catalog_data=catalog_data)
     if plan['problems']:
         raise AdminError('Refusing import: ' + '; '.join(plan['problems']))
     if plan['action'] == 'existing':
@@ -738,12 +791,20 @@ def apply_import(target: Target, zip_path, source_id: str, *, archive_dir=None, 
     entry = (catalog_data or catalog())['sources'].get(source_id) or {}
 
     def mutate(con):
+        # The verified copy is private, but re-check it right before the write anyway.
+        if sha256_file(staged) != plan['sha256']:
+            raise AdminError('Verified input copy changed before import; nothing was changed.')
+        side = staged.with_suffix(staged.suffix + '.provenance.json')
+        found = json.loads(side.read_text(encoding='utf-8-sig')) if side.is_file() else None
+        if found != plan['provenance']:
+            raise AdminError('Verified provenance copy changed before import; nothing was changed.')
         before = logical_state(con)
         # Stored archive paths follow the database's existing convention; a relative
         # archive root (the real DB uses data\raw) is relative to the repository root.
         with contextlib.chdir(ROOT):
-            result = importer(con, plan['zip'], source_id=source_id, archive_dir=plan['archive_dir'],
-                              publisher=plan['publisher'], landing_url=entry.get('landing_url'), activate=False)
+            result = importer(con, staged, source_id=source_id, archive_dir=plan['archive_dir'],
+                              publisher=plan['publisher'], landing_url=entry.get('landing_url'), activate=False,
+                              expected_sha256=plan['sha256'])
         after = logical_state(con)
         if after['selection'] != before['selection']:
             raise AdminError('INVARIANT VIOLATION: selection changed during a preserve-selection import; '

@@ -2,7 +2,7 @@
 
 Status: implemented and verified on **synthetic, temporary and disposable
 databases only**. Committed locally as `6407597` on `codex/local-real-feed-atlas` (based on
-`e4db51a`); not pushed.
+`e4db51a`), with review fixes in a later local commit (see section 10); not pushed.
 
 > **No second real feed version has been obtained or imported.** The real database
 > (`data/transport_atlas.duckdb`) was opened read-only only; its selection and bytes
@@ -131,7 +131,9 @@ Common options: `--backend duckdb|sqlite` (otherwise taken from the suffix:
 
 ### `import` checks
 
-- The ZIP is an existing local file; there is no URL or download path.
+- The ZIP is an existing local file; there is no URL or download path. It and its
+  sidecar are first copied into a private temporary folder. Every check below runs
+  on that copy, and that copy is what gets imported (see section 10).
 - SHA-256, ZIP CRC (`testzip`), and a full parse plus the importer's validation.
 - **Real feeds need a provenance sidecar**, checked against the official catalog
   (`configs/sardinia_sources.json`) with the same rules as the Phase 3/4 audit:
@@ -405,3 +407,97 @@ Each item needs **fresh, explicit user authorization**:
   `scripts/profile_local.py` (API port override), `README.md`,
   `docs/IMPLEMENTATION_STATUS.md`.
 - Untouched and unstaged: `PHASE4_APPLY.md`, `codex-phase3f-review.patch`.
+
+## 10. Review fixes after `acf5c67`
+
+### Defect 1: input files could change between validation and import (TOCTOU)
+
+`apply_import` validated the ZIP and its provenance sidecar at the caller's path
+(`plan_import`). It then took the backup, opened the database and called
+`import_file` **with the same path**, which re-read both files. If they were
+replaced in between (for example, a re-download into `data/downloads/<source>.zip`
+while the backup copied about 67 MB), the database received bytes that had never
+been verified:
+- a different feed was hashed afresh and committed;
+- the sidecar was re-read, and `import_file` checks only its source, SHA-256 and
+  timezone, not HTTPS, approved hosts or the catalog landing URL. A forged
+  `http://` download URL would have been stored.
+
+The old post-commit hash check only reported the mismatch after the commit.
+
+**Fix:**
+- `admin._stage_input` copies the ZIP and its sidecar into a new private temporary
+  folder before anything else. The original is hashed before and after the copy,
+  and the sidecar bytes are read before and after it. Any difference refuses the
+  operation (`changed while being staged`) before any backup or write.
+- `plan_import` (the preview) and `apply_import` validate **the staged copy**,
+  and `apply_import` imports **that copy**.
+- Immediately before the write, inside the guarded step, the staged ZIP's hash
+  and the staged sidecar's content are re-checked against the plan.
+- `import_file` receives `expected_sha256=<verified hash>` and refuses any other
+  bytes before writing anything.
+- `import_file` now also re-hashes the ZIP **after parsing in every mode**, so the
+  parsed rows, the recorded hash and the archived copy are always the same bytes.
+  This closes the smaller window between its own hashing and parsing. The archive
+  copy was already hash-checked.
+- The staging folder is removed afterwards. Plans report the caller's path as
+  `zip` and the copy as `verified_copy`.
+
+### Defect 2: sidecar-creation failures escaped the cleanup
+
+`import_file` wrote the archived provenance sidecar *outside* the failure-cleanup
+scope, directly at its final path. A failed write (disk full, permissions) left
+the newly created archive unreferenced and could leave a partial sidecar. The
+same was true for any error while computing calendar bounds.
+
+**Fix:**
+- Creating the archive, writing the sidecar and computing the bounds now share one
+  cleanup scope with the transaction (`_discard_created`).
+- The sidecar is written to a unique `.part` file and renamed into place. It
+  refuses to replace a sidecar that appeared concurrently, and the `.part` file is
+  always removed.
+- Cleanup removes **only files this call created**, and none at all if a
+  committed snapshot of the same source and bytes now references them. An
+  archive or sidecar that existed before the call is never deleted.
+
+All existing controls and defaults are unchanged: `activate=True` by default,
+preview-by-default, backups, locks, expected-current, `--real-database`,
+provenance rules and the synthetic fixtures.
+
+### Regression tests (10 new; 12 cases with the backend parametrization)
+
+| Test | Proves |
+|---|---|
+| `test_zip_replaced_during_backup_imports_only_the_verified_bytes` (SQLite and DuckDB) | The backup's copy function swaps the input for another valid feed (asserted to have happened). Only the originally verified bytes are committed and archived, and the swapped bytes never appear |
+| `test_provenance_replaced_during_backup_is_not_used` | A sidecar forged during the backup (`http://` URL, other timestamp) is ignored. The stored `download_url`, `retrieved_at` and archived sidecar equal the verified ones |
+| `test_input_changing_while_staged_is_refused` | A change during staging is refused with no backup and no change |
+| `test_import_file_rejects_bytes_other_than_expected` | `expected_sha256` mismatch: nothing written |
+| `test_import_file_detects_a_zip_changed_while_parsing` | A swap after hashing, during parsing, is refused: no rows, no archive |
+| `test_sidecar_failure_removes_only_the_new_archive` (SQLite and DuckDB) | An injected sidecar write failure (partial `.part` written first) leaves no archive, sidecar or `.part`. The database is unchanged and `status` shows no orphans |
+| `test_sidecar_failure_keeps_a_previously_existing_archive` | A pre-existing archive with the same bytes survives the failure untouched |
+| `test_sidecar_failure_keeps_an_archive_a_committed_snapshot_references` | A concurrent SQLite writer commits the same bytes first, so its archive is kept and the failure explains why |
+
+All 10 new tests **fail on `acf5c67`** (with `admin.py` and `ingest.py` temporarily
+restored) and pass after the fix.
+
+### Verification of the fixes
+
+- Python, services stopped: **197 passed, 0 skipped** (the previous 187 plus 10).
+- Synthetic History browser smoke, rebuilt through the corrected `apply_import`:
+  `preserved` stage passed (v1 current), `activated` stage passed (v2 current).
+- `verify_local.ps1 -Browser`, services running on the real database with
+  `-ApiPort 8765`: **passed** (log
+  `data/local-verification/phase7a/verify-phase7a-review-20261107-173505.log`, 11.6 minutes):
+  - pytest: 191 passed, 6 skipped (the expected real-DuckDB cases under the lock);
+  - startup probe: 3.5 s;
+  - production build: passed;
+  - real-data smoke: 6 groups, initial map ready in 5.2 s;
+  - filter races: 4 groups, initial 7.7 s, new date 2.4 s;
+  - data-quality checks: 5 groups;
+  - History (real mode): passed.
+
+  These timings are back in line with Phase 6. That supports the earlier 15 s
+  reading being machine load rather than a regression.
+- Real database afterwards: SHA-256 `3c308708…3ca0` and mtime 2026-11-06 17:33 are
+  unchanged; the selection rows are identical (4 rows, 4 snapshots). No
+  `data/backups/` folder exists, so no admin mutation targeted the default location.

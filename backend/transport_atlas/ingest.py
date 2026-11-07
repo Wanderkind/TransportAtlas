@@ -103,9 +103,43 @@ def _validate(data):
             raise FeedError(f"Overlapping frequency intervals for trip {tid}")
     return shape_ids
 
+def _sha256(path: Path) -> str:
+    h=hashlib.sha256()
+    with Path(path).open('rb') as stream:
+        for chunk in iter(lambda:stream.read(1048576), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _write_text(path: Path, text: str):
+    """Indirection point so tests can inject a sidecar write failure."""
+    path.write_text(text, encoding='utf-8')
+
+
+def _discard_created(con, created: list[Path], source_id: str, digest: str, exc: BaseException):
+    """Remove files this failed import created, unless a committed snapshot of the
+    same source and bytes references them (e.g. a concurrent SQLite writer)."""
+    if not created:
+        return
+    try:
+        referenced = one(con,'SELECT snapshot_id FROM feed_snapshots WHERE source_id=? AND content_sha256=?',(source_id,digest))
+    except Exception:
+        referenced = True
+    if referenced:
+        exc.add_note('Archive files kept: a committed snapshot may reference them; check manage_snapshots.py status')
+        return
+    for path in reversed(created):
+        try:
+            path.unlink(missing_ok=True)
+            exc.add_note(f'Removed unreferenced file created by this failed import: {path}')
+        except OSError as cleanup:
+            exc.add_note(f'Unreferenced file left by this failed import (remove manually): {path} ({cleanup})')
+
+
 def import_file(con, file: str | Path, *, source_id: str, archive_dir: str | Path,
                 publisher: str | None = None, landing_url: str | None = None,
-                license_name: str | None = None, activate: bool = True) -> dict:
+                license_name: str | None = None, activate: bool = True,
+                expected_sha256: str | None = None) -> dict:
     """Parse+validate before BEGIN, then commit the snapshot (and, if ``activate``, the
     selection pointer) in one transaction.
 
@@ -114,15 +148,17 @@ def import_file(con, file: str | Path, *, source_id: str, archive_dir: str | Pat
     neither a half-committed database nor an unreferenced archive. A hard crash between
     archiving and COMMIT can still leave an unreferenced archive; it is harmless (the
     next import of the same bytes reuses it) and ``manage_snapshots.py status`` lists it.
+
+    ``expected_sha256`` (used by the admin path) refuses any bytes other than the ones
+    the caller verified. In every mode the ZIP is re-hashed after parsing, so the parsed
+    rows, the recorded hash and the archived copy are guaranteed to be the same bytes.
     """
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,79}', source_id):
         raise FeedError("source_id must contain safe ASCII letters, numbers, _ or -")
     file = Path(file)
-    h=hashlib.sha256()
-    with file.open('rb') as stream:
-        for chunk in iter(lambda:stream.read(1048576), b''):
-            h.update(chunk)
-    digest=h.hexdigest()
+    digest=_sha256(file)
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise FeedError('ZIP bytes differ from the verified SHA-256; refusing to import')
     provenance_file = file.with_suffix(file.suffix + '.provenance.json')
     provenance = None
     if provenance_file.exists():
@@ -136,6 +172,8 @@ def import_file(con, file: str | Path, *, source_id: str, archive_dir: str | Pat
     if existing:
         return dict(status="unchanged",snapshot_id=existing['snapshot_id'],source_id=source_id,sha256=digest)
     data=read_feed(file)
+    if _sha256(file) != digest:
+        raise FeedError('ZIP changed while it was being read; refusing to import')
     known_shapes=_validate(data)
     snapshot_id = hashlib.sha256((source_id+':'+digest).encode()).hexdigest()[:32]
     archive_path = Path(archive_dir)/source_id/(digest+'.zip')
@@ -150,23 +188,37 @@ def import_file(con, file: str | Path, *, source_id: str, archive_dir: str | Pat
             raise FeedError('Existing archived provenance is unreadable; refusing to overwrite') from exc
         if archived_provenance != provenance:
             raise FeedError('Existing archived provenance differs; refusing to overwrite')
+    # Only files this call creates are ever removed on failure; an archive or sidecar
+    # that already existed (e.g. referenced by a committed snapshot) is never touched.
     created: list[Path] = []
-    if not archive_path.exists():
-        temporary=archive_path.with_name(archive_path.name+'.'+uuid4().hex+'.part')
-        try:
-            shutil.copyfile(file,temporary)
-            if hashlib.sha256(temporary.read_bytes()).hexdigest()!=digest:
-                raise FeedError("Archived bytes did not match source hash")
-            temporary.replace(archive_path)
-            created.append(archive_path)
-        finally:
-            temporary.unlink(missing_ok=True)
-    if provenance is not None and not sidecar.exists():
-        sidecar.write_text(json.dumps(provenance, indent=2), encoding='utf-8')
-        created.append(sidecar)
-    calendar_dates = [service_date(r['start_date']) for r in data['calendar']] + [service_date(r['end_date']) for r in data['calendar']] + [service_date(r['date']) for r in data['calendar_dates']]
-    feed_start=min(calendar_dates)
-    feed_end=max(calendar_dates)
+    try:
+        if not archive_path.exists():
+            temporary=archive_path.with_name(archive_path.name+'.'+uuid4().hex+'.part')
+            try:
+                shutil.copyfile(file,temporary)
+                if _sha256(temporary)!=digest:
+                    raise FeedError("Archived bytes did not match source hash")
+                temporary.replace(archive_path)
+                created.append(archive_path)
+            finally:
+                temporary.unlink(missing_ok=True)
+        if provenance is not None and not sidecar.exists():
+            # Written via a temporary file so a failure never leaves a partial sidecar.
+            temporary=sidecar.with_name(sidecar.name+'.'+uuid4().hex+'.part')
+            try:
+                _write_text(temporary, json.dumps(provenance, indent=2))
+                if sidecar.exists():
+                    raise FeedError('Archived provenance appeared concurrently; refusing to overwrite')
+                temporary.replace(sidecar)
+                created.append(sidecar)
+            finally:
+                temporary.unlink(missing_ok=True)
+        calendar_dates = [service_date(r['start_date']) for r in data['calendar']] + [service_date(r['end_date']) for r in data['calendar']] + [service_date(r['date']) for r in data['calendar_dates']]
+        feed_start=min(calendar_dates)
+        feed_end=max(calendar_dates)
+    except Exception as exc:
+        _discard_created(con, created, source_id, digest, exc)
+        raise
     timezone_set={a['agency_timezone'] for a in data['agency']}
     tz=next(iter(timezone_set)) if len(timezone_set)==1 else None
     begin = 'BEGIN TRANSACTION'
@@ -213,20 +265,7 @@ def import_file(con, file: str | Path, *, source_id: str, archive_dir: str | Pat
         con.commit()
     except Exception as exc:
         con.rollback()
-        try:
-            # Never remove an archive a committed snapshot refers to (e.g. a concurrent
-            # SQLite writer that imported the same bytes first).
-            referenced = one(con,'SELECT snapshot_id FROM feed_snapshots WHERE source_id=? AND content_sha256=?',(source_id,digest))
-        except Exception:
-            referenced = True
-        if referenced and created:
-            exc.add_note('Archive files kept: a committed snapshot may reference them; check manage_snapshots.py status')
-        for path in reversed(created if not referenced else []):
-            try:
-                path.unlink(missing_ok=True)
-                exc.add_note(f'Removed unreferenced file created by this failed import: {path}')
-            except OSError as cleanup:
-                exc.add_note(f'Unreferenced file left by this failed import (remove manually): {path} ({cleanup})')
+        _discard_created(con, created, source_id, digest, exc)
         raise
     return dict(status='imported',source_id=source_id,snapshot_id=snapshot_id,sha256=digest,
                 activated=activate,archive_created=archive_path in created,archive_path=str(archive_path),

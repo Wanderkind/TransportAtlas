@@ -645,3 +645,173 @@ def test_real_database_preflight_is_read_only():
         assert snap['selected'] and snap['import_status'] == 'ready'
         assert snap['archive']['present'] and snap['archive']['sha256_verified'] and snap['archive']['provenance_sidecar']
     assert admin.sha256_file(path) == sha
+
+
+# -- Review fixes (post-acf5c67): input TOCTOU and sidecar-failure cleanup ------------------
+
+def _input_copy(env, tmp_path, key='v2'):
+    path = tmp_path / 'incoming' / 'feed.zip'
+    path.parent.mkdir(exist_ok=True)
+    shutil.copyfile(env.zips[key], path)
+    return path
+
+
+def test_zip_replaced_during_backup_imports_only_the_verified_bytes(env, tmp_path):
+    """A re-download into the same path while the backup is being taken must not reach the DB."""
+    path = _input_copy(env, tmp_path)
+    verified = admin.sha256_file(path)
+    swapped = []
+
+    def swapping_copy(src, dst):
+        shutil.copyfile(env.zips['other'], path)  # a different, valid GTFS feed
+        swapped.append(admin.sha256_file(path))
+        shutil.copyfile(src, dst)
+
+    before = env.state()
+    out = admin.apply_import(env.target, path, hf.SOURCE, synthetic=True, copy=swapping_copy, **env.kw())
+    assert swapped and swapped[0] != verified and admin.sha256_file(path) == swapped[0]  # the swap really happened
+    assert out['applied'] and out['sha256'] == verified and out['result']['sha256'] == verified
+    after = env.state()
+    assert after['selection'] == before['selection']
+    new = [s for s in after['snapshots'] if s not in before['snapshots']]
+    assert new == [[out['result']['snapshot_id'], hf.SOURCE, verified, 'ready']]
+    assert admin.sha256_file(out['result']['archive_path']) == verified
+    assert not any(s[2] == swapped[0] for s in after['snapshots'] if s[1] == hf.SOURCE)
+
+
+def test_provenance_replaced_during_backup_is_not_used(sqlite_env, tmp_path):
+    env = sqlite_env
+    zip_path = _provenanced(env, tmp_path)
+    side = Path(str(zip_path) + '.provenance.json')
+    verified = json.loads(side.read_text(encoding='utf-8'))
+
+    def tampering_copy(src, dst):
+        forged = {**verified, 'download_url': 'http://evil.example/x.zip', 'retrieved_at': '2030-01-01T00:00:00+00:00'}
+        side.write_text(json.dumps(forged), encoding='utf-8')
+        shutil.copyfile(src, dst)
+
+    out = admin.apply_import(env.target, zip_path, 'synthetic_official', new_source=True, catalog_data=FAKE_CATALOG,
+                             copy=tampering_copy, **env.kw())
+    assert json.loads(side.read_text(encoding='utf-8'))['download_url'].startswith('http://')  # tampering happened
+    archived = Path(out['result']['archive_path']).with_suffix('.zip.provenance.json')
+    assert json.loads(archived.read_text(encoding='utf-8')) == verified
+    con = admin.open_readonly(env.target)
+    try:
+        src = admin._one(con, 'SELECT download_url FROM feed_sources WHERE source_id=?', ('synthetic_official',))
+        snap = admin._one(con, 'SELECT retrieved_at FROM feed_snapshots WHERE snapshot_id=?', (out['result']['snapshot_id'],))
+    finally:
+        con.close()
+    assert src['download_url'] == verified['download_url'] and snap['retrieved_at'] == verified['retrieved_at']
+
+
+def test_input_changing_while_staged_is_refused(sqlite_env, tmp_path, monkeypatch):
+    env = sqlite_env
+    path = _input_copy(env, tmp_path)
+    real_copy = shutil.copyfile
+
+    def racing_copy(src, dst, *a, **k):
+        result = real_copy(src, dst, *a, **k)
+        if Path(src) == path:
+            real_copy(env.zips['other'], path)
+        return result
+
+    monkeypatch.setattr(admin.shutil, 'copyfile', racing_copy)
+    before = env.state()
+    with pytest.raises(admin.AdminError, match='changed while being staged'):
+        admin.apply_import(env.target, path, hf.SOURCE, synthetic=True, copy=real_copy, **env.kw())
+    assert env.state() == before and env.backups_made() == []
+
+
+def test_import_file_rejects_bytes_other_than_expected(tmp_path):
+    con = connect(tmp_path / 'x.sqlite', 'sqlite')
+    zips = hf.build(tmp_path / 'zips')
+    with pytest.raises(FeedError, match='differ from the verified SHA-256'):
+        import_file(con, zips['v1'], source_id=hf.SOURCE, archive_dir=tmp_path / 'raw', expected_sha256='0' * 64)
+    assert rows(con, 'SELECT * FROM feed_snapshots') == [] and not (tmp_path / 'raw' / hf.SOURCE).exists()
+    con.close()
+
+
+def test_import_file_detects_a_zip_changed_while_parsing(tmp_path, monkeypatch):
+    con = connect(tmp_path / 'x.sqlite', 'sqlite')
+    zips = hf.build(tmp_path / 'zips')
+    target = tmp_path / 'feed.zip'
+    shutil.copyfile(zips['v1'], target)
+    real = ingest.read_feed
+
+    def swap_then_read(path):
+        data = real(path)
+        shutil.copyfile(zips['v2'], target)  # bytes change after hashing, during parsing
+        return data
+
+    monkeypatch.setattr(ingest, 'read_feed', swap_then_read)
+    with pytest.raises(FeedError, match='changed while it was being read'):
+        import_file(con, target, source_id=hf.SOURCE, archive_dir=tmp_path / 'raw')
+    assert rows(con, 'SELECT * FROM feed_snapshots') == [] and not (tmp_path / 'raw' / hf.SOURCE).exists()
+    con.close()
+
+
+def _failing_sidecar_write(monkeypatch, before_raise=None):
+    def fail(path, text):
+        Path(path).write_text(text[:5], encoding='utf-8')  # a partial temporary file
+        if before_raise:
+            before_raise()
+        raise OSError('disk full while writing provenance (injected)')
+    monkeypatch.setattr(ingest, '_write_text', fail)
+
+
+def test_sidecar_failure_removes_only_the_new_archive(env, tmp_path, monkeypatch):
+    zip_path = _provenanced(env, tmp_path)
+    before, counts, archives = env.state(), env.counts(), env.archives()
+    _failing_sidecar_write(monkeypatch)
+    with pytest.raises(OSError, match='injected') as info:
+        admin.apply_import(env.target, zip_path, 'synthetic_official', new_source=True, catalog_data=FAKE_CATALOG,
+                           **env.kw())
+    assert any('Removed unreferenced file' in n for n in getattr(info.value, '__notes__', []))
+    assert env.state() == before and env.counts() == counts and env.archives() == archives  # no archive, sidecar or .part
+    assert admin.status(env.target, extra_archive_dirs=[env.raw])['unreferenced_archives'] == []
+
+
+def _provenanced_fixture(tmp_path):
+    zip_path = hf.build(tmp_path / 'zips')['other']
+    digest = admin.sha256_file(zip_path)
+    Path(str(zip_path) + '.provenance.json').write_text(json.dumps(
+        {'source_id': 'src', 'sha256': digest, 'retrieved_at': '2026-11-07T00:00:00+00:00'}), encoding='utf-8')
+    return zip_path, digest, tmp_path / 'raw' / 'src' / (digest + '.zip')
+
+
+def test_sidecar_failure_keeps_a_previously_existing_archive(tmp_path, monkeypatch):
+    con = connect(tmp_path / 'x.sqlite', 'sqlite')
+    zip_path, digest, existing = _provenanced_fixture(tmp_path)
+    existing.parent.mkdir(parents=True)
+    shutil.copyfile(zip_path, existing)  # e.g. left by an earlier crash; not created by this call
+    _failing_sidecar_write(monkeypatch)
+    with pytest.raises(OSError, match='injected'):
+        import_file(con, zip_path, source_id='src', archive_dir=tmp_path / 'raw')
+    assert admin.sha256_file(existing) == digest
+    assert sorted(p.name for p in existing.parent.iterdir()) == [existing.name]
+    assert rows(con, 'SELECT * FROM feed_snapshots') == []
+    con.close()
+
+
+def test_sidecar_failure_keeps_an_archive_a_committed_snapshot_references(tmp_path, monkeypatch):
+    """A concurrent SQLite writer commits the same bytes first: its archive must survive."""
+    import sqlite3
+    db = tmp_path / 'x.sqlite'
+    con = connect(db, 'sqlite')
+    zip_path, digest, archive = _provenanced_fixture(tmp_path)
+
+    def concurrent_commit():
+        other = sqlite3.connect(db)
+        other.execute('INSERT INTO feed_sources VALUES(?,?,?,?,?)', ('src', 'x', None, None, None))
+        other.execute('INSERT INTO feed_snapshots VALUES(?,?,?,?,?,?,?,?,?)',
+                      ('c' * 32, 'src', digest, '2026-11-07T00:00:00+00:00', str(archive), 'ready', None, None, None))
+        other.commit()
+        other.close()
+
+    _failing_sidecar_write(monkeypatch, concurrent_commit)
+    with pytest.raises(OSError, match='injected') as info:
+        import_file(con, zip_path, source_id='src', archive_dir=tmp_path / 'raw')
+    assert any('Archive files kept' in n for n in info.value.__notes__)
+    assert archive.is_file() and admin.sha256_file(archive) == digest
+    assert not list(archive.parent.glob('*.part'))
+    con.close()

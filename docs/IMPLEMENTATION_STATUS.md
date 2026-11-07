@@ -6,7 +6,10 @@ Phase 7A (local commit, not pushed) adds `scripts/manage_snapshots.py`, a CLI-on
 preview-by-default path for listing snapshots, importing an existing local ZIP
 **without** changing the atlas selection, and selecting or restoring a snapshot
 under an expected-current precondition. Every mutation needs stopped services and
-a verified backup first. The web app stays read-only. It was exercised only on
+a verified backup first. The web app stays read-only. After review, imports verify
+and import a private copy of the ZIP and its provenance, so the files cannot be
+swapped between validation and commit. A failure while writing the provenance
+sidecar now cleans up the archive created by that import. It was exercised only on
 temporary SQLite/DuckDB databases and the synthetic demo database.
 
 **No second real feed has been obtained or imported**, the real database's
