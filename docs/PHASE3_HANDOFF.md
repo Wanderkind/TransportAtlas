@@ -26,7 +26,8 @@ change ≈ 1.6–2.7 s. The first-ever regional build on an empty shape store st
 takes about a minute, once.
 
 Remaining (each needs a user decision or new data, so not done unattended):
-- External GTFS validation: needs downloading the MobilityData validator (Java).
+- ~~External GTFS validation~~: done November 7 (Phase 4; see
+  `PHASE4_EXTERNAL_GTFS_VALIDATION.md`). 0 ERROR notices; no importer defect found.
 - Optional GTFS fields (wheelchair, platform codes, colours): need importer
   changes plus a re-import of the verified database.
 - Historical snapshot selection: only one snapshot per source is imported.

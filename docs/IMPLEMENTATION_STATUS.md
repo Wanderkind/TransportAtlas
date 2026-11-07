@@ -129,7 +129,9 @@ declared `feed_info`. These include accessibility/bicycle flags, distances along
 shapes, descriptive fields, stop headsigns, continuous pickup/dropoff and transfer
 metadata. They remain recoverable in the original ZIPs, not silently invented.
 ARST has **156 missing-shape trip-template warnings**; the other imports report
-none from the current custom importer. No external MobilityData validator ran.
+none from the current custom importer. The external MobilityData validator v8.0.1
+ran locally on November 7 (date 2026-11-06): 0 ERROR notices in all four feeds;
+WARNING/INFO findings and their impact are in `PHASE4_EXTERNAL_GTFS_VALIDATION.md`.
 
 ## Geographic and timetable behavior
 
@@ -264,8 +266,9 @@ remain ignored. The README documents fresh installation and imports.
    by default). Viewport/vector-tile loading remains future work.
 2. Done November 7: route timetables page with `offset`/`limit`, with server-side
    direction/variant filters applied before paging and a **Load more** control.
-3. Run the external GTFS validator, normalize more optional fields and complete
-   licensing/attribution metadata. Current warnings are custom-importer checks.
+3. Done November 7: external GTFS validator (v8.0.1, local, 0 ERROR notices).
+   Still open: normalize more optional fields and complete licensing/attribution
+   metadata.
 4. Add historical snapshot-selection controls, exports, physical-stop matching and
    connectivity/accessibility analysis, then validate a second country/region.
 
