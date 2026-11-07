@@ -370,4 +370,13 @@ equal the count independently verified in Phase 3.
 
 ## Commits
 
-COMMITS_PLACEHOLDER
+Local only, on `codex/local-real-feed-atlas`. Not pushed: there is no PR, merge,
+deployment or GitHub Actions run, and pushing needs the user's authorization.
+
+| Commit | Change |
+|---|---|
+| `27ab6d6` | History backend, API, UI, synthetic fixtures, tests, browser check, docs |
+| (this commit) | Records the commit hash in this document |
+
+**Readiness:** the definition of done is met for synthetic data, and every local
+check passed. Real comparisons need a second authorized import per operator.
