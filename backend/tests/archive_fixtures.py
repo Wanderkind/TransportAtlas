@@ -51,3 +51,14 @@ def write(zip_path: Path, prov: dict) -> Path:
     side = Path(str(zip_path) + '.provenance.json')
     side.write_text(json.dumps(prov, indent=2), encoding='utf-8')
     return side
+
+
+# -- Phase 7D1: an invented provider that accepts browser-downloaded copies ----------------------
+BROWSER_PROVIDER = 'example_browser_archive'
+BROWSER_PROVIDERS = {'providers': {BROWSER_PROVIDER: {
+    'name': 'SYNTHETIC Example Browser Archive (test only)', 'record_hosts': [RECORD_HOST],
+    'download_hosts': [], 'version_id': 'sha1', 'import_enabled': False,
+    'browser_acquisition': {'enabled': True,
+                            'record_url_pattern': f'https://{RECORD_HOST}/data/feeds/{{feed_id}}/versions/{{sha1}}'}}}}
+FEED_ID = 'f-synthetic-valley'
+OBSERVED_ON = '2026-08-28'

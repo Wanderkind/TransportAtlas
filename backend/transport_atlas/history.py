@@ -335,9 +335,12 @@ class SnapshotHistory:
         for prov, role in ((pa, 'baseline'), (pb, 'comparison')):
             if prov['kind'] == THIRD_PARTY:
                 archive = prov['archive'] or {}
+                browser = archive.get('acquisition_method') == 'authenticated_browser'
+                date_only = ' (date only)' if prov['observation_basis'] == 'archive_record_date' else ''
                 notices.append({'code': f'{role}_third_party_archived', 'level': 'info',
                                 'text': (f"The {role} is an archived copy from {archive.get('provider_name') or 'a third-party archive'}"
-                                         f" (archive observation {(prov['observed_at'] or 'unknown')[:10]}; obtained locally "
+                                         f"{', downloaded through the user’s browser; delivery address not recorded' if browser else ''}"
+                                         f" (archive observation {(prov['observed_at'] or 'unknown')[:10]}{date_only}; obtained locally "
                                          f"{prov['local_retrieved_at'][:10]}), originally published by "
                                          f"{prov['publisher']['name'] or 'the publisher'}. It was not downloaded from the "
                                          'publisher by this computer.')})

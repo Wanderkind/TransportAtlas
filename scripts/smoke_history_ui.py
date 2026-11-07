@@ -165,16 +165,21 @@ def archived(driver, report, sources):
     old, new = [s['snapshot_id'] for s in observed]
     assert [s['snapshot_id'] for s in retrieved] == [new, old], 'archived copy was obtained after the current one'
     assert [s['provenance']['kind'] for s in observed] == ['third_party_archived', 'publisher_direct']
+    browser = observed[0]['provenance']['archive'].get('acquisition_method') == 'authenticated_browser'
+    provider_name = observed[0]['provenance']['archive']['provider_name']
     selection_before = [s['snapshot_id'] for s in api('snapshots')]
     assert next(s['snapshot_id'] for s in api('snapshots') if s['source_id'] == hf.SOURCE) == new
-    report['current_synthetic_version'] = 'archived'
+    report['current_synthetic_version'] = 'browser-archived' if browser else 'archived'
     driver.get(BASE+f'/?date={DATE}&basemap=plain&diagnostics=1&view=history')
     until(driver, lambda d: snapshot_rows(d) == [(old, 'false', 'Yes'), (new, 'true', 'Yes')], 'observation-ordered inventory')
     cells = provenance_cells(driver)
     kind, label, seen, got = cells[old]
-    assert kind == 'third_party_archived' and 'Archived copy' in label and 'SYNTHETIC Example Archive' in label, cells[old]
+    assert kind == 'third_party_archived' and 'Archived copy' in label and provider_name in label, cells[old]
     assert 'not downloaded from the publisher by this computer' in label and 'CC-BY-4.0' in label, label
     assert seen.startswith('2026-08-28') and 'per the archive record' in seen, seen
+    if browser:
+        assert "downloaded through the user's browser" in label and 'delivery address not recorded' in label, label
+        assert 'date only' in seen, seen
     assert got[:10] == observed[0]['retrieved_at'][:10] and got[:10] != '2026-08-28', got
     assert cells[new][0] == 'publisher_direct' and 'our own download' in cells[new][2], cells[new]
     assert 'observation time' in text(driver, '.sort-note').lower()
@@ -190,12 +195,15 @@ def archived(driver, report, sources):
     comparison_ready(driver, old, new, 'same_date')
     assert driver.find_elements(By.CSS_SELECTOR, '.synthetic-banner[data-synthetic="true"]')
     notice = text(driver, '[data-notice="baseline_third_party_archived"]')
-    assert 'SYNTHETIC Example Archive' in notice and 'not downloaded from the publisher' in notice and '2026-08-28' in notice, notice
+    assert provider_name in notice and 'not downloaded from the publisher' in notice and '2026-08-28' in notice, notice
+    if browser:
+        assert 'delivery address not recorded' in notice and '(date only)' in notice, notice
     side = driver.find_element(By.CSS_SELECTOR, '.side[data-side="baseline"] [data-field="side-provenance"]')
     assert side.get_attribute('data-provenance-kind') == 'third_party_archived' and 'observed 2026-08-28' in side.text, side.text
     status, cells = metric(driver, 'trip_templates_on_date')
     assert status == 'changed' and cells[1:4] == ['8', '9', '+1'], cells
-    report['archived_screenshot'] = screenshot(driver, 'phase7c-history-archived-compare')
+    report['archived_screenshot'] = screenshot(driver, 'phase7d1-history-browser-archived-compare' if browser
+                                               else 'phase7c-history-archived-compare')
     report['checks'].append('same-date comparison of an archived older copy with the current version, with an attribution notice')
     back_to_atlas(driver, selection_before, report)
     ready(driver, DATE, set(sources) - {'none'})

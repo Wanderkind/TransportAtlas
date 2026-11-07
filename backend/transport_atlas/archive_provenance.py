@@ -20,13 +20,24 @@ Evidence classes (``classify``):
 
 An archive sidecar deliberately has no top-level ``download_url`` or ``landing_url``,
 so older readers can never mistake the archive for an official download.
+
+Phase 7D1 adds ``archive.acquisition_method``:
+
+* ``provider_download`` (default; Phase 7C): the bytes were fetched from a verified
+  provider download host, recorded in ``archive.download_url``;
+* ``authenticated_browser``: the user downloaded the copy in a web browser with their
+  own account. The delivery address is not known, so the record must say
+  ``delivery: "unknown"`` and carry no download URL. It is anchored instead on the
+  provider's public version page (exact URL pattern) and on the archive SHA-1, which
+  must equal the SHA-1 of the bytes. A date-only ``observed_on`` may replace
+  ``observed_at`` when only the date is public. No account details are allowed.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -47,6 +58,13 @@ KIND_LABELS = {
 }
 DEFAULT_PROVIDERS = Path(__file__).resolve().parents[2] / 'configs' / 'archive_providers.json'
 SHA1_RE = re.compile(r'[0-9a-f]{40}')
+FEED_ID_RE = re.compile(r'f-[0-9a-z~_.-]{1,120}')
+PROVIDER_DOWNLOAD = 'provider_download'
+BROWSER = 'authenticated_browser'
+RETRIEVED_BASES = ('file_modification_time', 'stated_by_user')
+# Keys that would identify the user's account; forbidden in browser-acquired records.
+ACCOUNT_RE = re.compile(r'(account|user(name)?$|^user|e-?mail|login|customer|plan_id|subscription)', re.I)
+EMAIL_RE = re.compile(r'[^@\s]+@[^@\s]+\.[a-z]{2,}', re.I)
 # Key or value fragments that suggest a credential ended up in a provenance record.
 SECRET_RE = re.compile(r'(api[_-]?key|apikey|token|secret|password|passwd|cookie|authorization|bearer|session)', re.I)
 
@@ -158,8 +176,10 @@ def archive_problems(prov: dict, *, source_id: str, sha256: str, sha1: str, size
         return problems
     if archive.get('provider_name') != provider.get('name'):
         problems.append(f'archive.provider_name must be {provider.get("name")!r} (the registered provider name)')
-    if not provider.get('import_enabled'):
-        problems.append(f'archive provider {name!r} is not enabled for imports: {provider.get("disabled_reason", "")}'.rstrip(': '))
+    method = archive.get('acquisition_method', PROVIDER_DOWNLOAD)
+    if method not in (PROVIDER_DOWNLOAD, BROWSER):
+        problems.append(f'archive.acquisition_method must be {PROVIDER_DOWNLOAD!r} or {BROWSER!r}')
+        return problems
     record_hosts = set(provider.get('record_hosts', []))
     download_hosts = set(provider.get('download_hosts', []))
     if download_hosts & (ALLOWED_OFFICIAL_HOSTS | set((entry or {}).get('download_hosts', []))):
@@ -173,13 +193,20 @@ def archive_problems(prov: dict, *, source_id: str, sha256: str, sha1: str, size
     _https(archive.get('record_url'), record_hosts, 'archive.record_url', problems)
     if isinstance(version, str) and version and version not in str(archive.get('record_url') or ''):
         problems.append('archive.record_url does not refer to archive.version_id')
-    if not download_hosts:
-        problems.append(f'provider {name!r} has no verified download hosts')
+    if method == BROWSER:
+        problems += _browser_problems(prov, archive, provider, name, sha1, retrieved)
     else:
-        _https(archive.get('download_url'), download_hosts, 'archive.download_url', problems)
-        final = archive.get('final_download_url')
-        if final is not None:
-            _https(final, download_hosts, 'archive.final_download_url', problems)
+        if not provider.get('import_enabled'):
+            problems.append(f'archive provider {name!r} is not enabled for imports: {provider.get("disabled_reason", "")}'.rstrip(': '))
+        if not download_hosts:
+            problems.append(f'provider {name!r} has no verified download hosts')
+        else:
+            _https(archive.get('download_url'), download_hosts, 'archive.download_url', problems)
+            final = archive.get('final_download_url')
+            if final is not None:
+                _https(final, download_hosts, 'archive.final_download_url', problems)
+        if 'observed_on' in archive:
+            problems.append('archive.observed_on is only for browser-acquired records; use observed_at')
     observed = archive.get('observed_at')
     if observed is not None:
         observed_at = _aware(observed)
@@ -206,6 +233,94 @@ def archive_problems(prov: dict, *, source_id: str, sha256: str, sha1: str, size
         if expected and lic.get('name') != expected:
             problems.append(f'license.name {lic.get("name")!r} differs from the catalog licence {expected!r}')
     return problems
+
+
+def _browser_problems(prov, archive, provider, name, sha1, retrieved) -> list[str]:
+    """Rules for a copy the user downloaded in a browser: anchored on the public version
+    page and the SHA-1; the delivery address is recorded as unknown, never guessed."""
+    problems = []
+    browser = provider.get('browser_acquisition') or {}
+    if not browser.get('enabled'):
+        problems.append(f'archive provider {name!r} does not accept browser-acquired copies')
+    for key in ('download_url', 'final_download_url'):
+        if archive.get(key) is not None:
+            problems.append(f'archive.{key} must be absent for a browser-acquired copy '
+                            '(the delivery address is not known; never guess it)')
+    if archive.get('delivery') != 'unknown':
+        problems.append('archive.delivery must be "unknown" for a browser-acquired copy')
+    feed = archive.get('feed_id')
+    if not isinstance(feed, str) or not FEED_ID_RE.fullmatch(feed):
+        problems.append('archive.feed_id must be the provider\'s feed id (e.g. f-spqb-aspoolbia)')
+    pattern = browser.get('record_url_pattern')
+    if not pattern:
+        problems.append(f'provider {name!r} has no record_url_pattern for browser-acquired copies')
+    elif isinstance(feed, str) and archive.get('record_url') != pattern.format(feed_id=feed, sha1=sha1):
+        problems.append('archive.record_url must be exactly the public version page for this feed and these bytes '
+                        f'({pattern})')
+    if prov.get('retrieved_at_basis') not in RETRIEVED_BASES:
+        problems.append(f'retrieved_at_basis must be one of {RETRIEVED_BASES}')
+    if archive.get('observed_on') is not None:
+        if archive.get('observed_at') is not None:
+            problems.append('give either archive.observed_on (date only) or archive.observed_at, not both')
+        try:
+            day = date.fromisoformat(str(archive['observed_on']))
+            if len(str(archive['observed_on'])) != 10:
+                raise ValueError
+            if retrieved is not None and day > retrieved.astimezone(timezone.utc).date():
+                problems.append('archive.observed_on is later than the local retrieval date')
+        except ValueError:
+            problems.append('archive.observed_on must be a date YYYY-MM-DD')
+    accounts = _account_fields(prov)
+    if accounts:
+        problems.append('browser-acquired records must not identify the user\'s account: ' + ', '.join(accounts[:5]))
+    return problems
+
+
+def _account_fields(value, path='') -> list[str]:
+    found = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if ACCOUNT_RE.search(str(key)):
+                found.append(f'{path}{key}')
+            found += _account_fields(item, f'{path}{key}.')
+    elif isinstance(value, list):
+        for n, item in enumerate(value):
+            found += _account_fields(item, f'{path}{n}.')
+    elif isinstance(value, str) and EMAIL_RE.search(value) and not path.startswith('license.'):
+        found.append(path.rstrip('.') or '<value>')
+    return found
+
+
+def browser_record(zip_path: str | Path, *, source_id: str, entry: dict, catalog_license: dict | None,
+                   provider_key: str, provider: dict, feed_id: str, observed_on: str | None,
+                   retrieved_at: str | None = None) -> dict:
+    """Build (not write) a browser-acquired archive record from computed facts only."""
+    path = Path(zip_path)
+    data = path.read_bytes()
+    sha1 = hashlib.sha1(data).hexdigest()
+    if retrieved_at is None:
+        retrieved_at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+        basis = 'file_modification_time'
+    else:
+        basis = 'stated_by_user'
+    lic = (entry.get('license') or catalog_license or {})
+    pattern = (provider.get('browser_acquisition') or {}).get('record_url_pattern') or ''
+    archive = {'provider': provider_key, 'provider_name': provider.get('name'),
+               'acquisition_method': BROWSER, 'delivery': 'unknown', 'feed_id': feed_id,
+               'version_id': sha1, 'record_url': pattern.format(feed_id=feed_id, sha1=sha1) if pattern else None}
+    if observed_on is not None:
+        archive['observed_on'] = observed_on
+    return {
+        'schema': ARCHIVE_SCHEMA, 'provenance_kind': THIRD_PARTY, 'source_id': source_id,
+        'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data),
+        'retrieved_at': retrieved_at, 'retrieved_at_basis': basis,
+        'publisher': {'name': entry.get('publisher'), 'landing_url': entry.get('landing_url')},
+        'archive': archive,
+        'license': {'name': lic.get('name'), 'evidence_url': lic.get('evidence_url'),
+                    'attribution': (f"Data: {entry.get('publisher')}, {lic.get('name') or 'licence unknown'}. "
+                                    f"Historical version {sha1} obtained from the {provider.get('name')}; "
+                                    'not endorsed by the publisher.')},
+    }
 
 
 # -- read side (History, route provenance, status) ------------------------------------
@@ -255,15 +370,21 @@ def classify(snap: dict, *, synthetic: bool = False, publisher: str | None = Non
     elif raw is not None and is_archive_record(raw):
         archive = raw.get('archive') or {}
         pub = raw.get('publisher') or {}
+        method = archive.get('acquisition_method', PROVIDER_DOWNLOAD)
+        observed = archive.get('observed_at') or archive.get('observed_on')
         out.update(kind=THIRD_PARTY, label=KIND_LABELS[THIRD_PARTY],
                    publisher={'name': pub.get('name') or publisher, 'landing_url': pub.get('landing_url') or landing_url,
                               'reported_origin_url': pub.get('reported_origin_url')},
-                   download_origin=archive.get('download_url'),
+                   download_origin=None if method == BROWSER else archive.get('download_url'),
                    archive={**{k: archive.get(k) for k in ('provider', 'record_url', 'version_id', 'observed_at',
-                                                           'observed_at_evidence_url', 'download_url')},
-                            'provider_name': archive.get('provider_name') or _provider_name(archive.get('provider'))},
-                   license=raw.get('license'), observed_at=archive.get('observed_at'),
-                   observation_basis='archive_record' if archive.get('observed_at') else 'unknown')
+                                                           'observed_on', 'observed_at_evidence_url', 'download_url',
+                                                           'feed_id')},
+                            'provider_name': archive.get('provider_name') or _provider_name(archive.get('provider')),
+                            'acquisition_method': method,
+                            'delivery_known': method != BROWSER},
+                   license=raw.get('license'), observed_at=observed,
+                   observation_basis=('archive_record_date' if archive.get('observed_on') and not archive.get('observed_at')
+                                      else 'archive_record' if observed else 'unknown'))
     elif raw is not None and raw.get('download_url'):
         out.update(kind=PUBLISHER_DIRECT, label=KIND_LABELS[PUBLISHER_DIRECT],
                    publisher={'name': publisher, 'landing_url': raw.get('landing_url') or landing_url,

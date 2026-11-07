@@ -8,7 +8,12 @@
       "download_hosts": [],
       "version_id": "sha1",
       "import_enabled": false,
-      "disabled_reason": "Transitland's download hosts are not yet verified from its documentation, and no historical download has been authorized (Phase 7B gate)."
+      "disabled_reason": "API/provider-download mode: Transitland's delivery hosts are not verified from its documentation (Phase 7D0), so no download URL can be recorded honestly.",
+      "browser_acquisition": {
+        "enabled": true,
+        "record_url_pattern": "https://www.transit.land/data/feeds/{feed_id}/versions/{sha1}",
+        "note": "Phase 7D1: a copy the user downloaded in a browser with their own account. Anchored on this public version page and the SHA-1 of the bytes; the delivery address is recorded as unknown. Importing still needs manage_snapshots.py import --archive-provenance --real-database --apply."
+      }
     }
   }
 }

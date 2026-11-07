@@ -8,6 +8,8 @@ atlas selection except through `activate` / `restore` with an expected-current c
   import          import an existing local ZIP WITHOUT selecting it
                   (--archive-provenance: a copy obtained from a third-party archive,
                   attributed to that archive; see docs/PHASE7C_ARCHIVE_PROVENANCE.md)
+  archive-record  write the provenance record for a ZIP the user downloaded from an
+                  archive in a browser (Phase 7D1; no database involved)
   activate        select a ready snapshot (or `none`) given --expected-current
   restore         undo the most recent journaled selection change of a source
   verify-backup   re-hash a backup and compare it with its record (read-only)
@@ -111,6 +113,20 @@ def main(argv=None) -> int:
                          'third-party archive provenance record (configs/archive_providers.json). Never '
                          'updates the source official download URL; never activates.')
 
+    sp = sub.add_parser('archive-record', help='Preview/write the archive record of a browser-downloaded ZIP')
+    sp.add_argument('--zip', required=True, type=Path, help='The downloaded ZIP (never inside data/raw)')
+    sp.add_argument('--source', required=True, help='Catalog source id, e.g. aspo')
+    sp.add_argument('--provider', required=True, help='Provider key in configs/archive_providers.json')
+    sp.add_argument('--feed-id', required=True, help="The provider's feed id, e.g. f-spqb-aspoolbia")
+    sp.add_argument('--acquisition', required=True, choices=['authenticated_browser'],
+                    help='How the copy was obtained (only browser downloads are supported here)')
+    sp.add_argument('--observed-on', help='Date the archive fetched it from the publisher (YYYY-MM-DD), '
+                                          'as shown on the public version page')
+    sp.add_argument('--retrieved-at', help='When you obtained the copy (ISO time with timezone); '
+                                           'default: the file modification time')
+    sp.add_argument('--write', action='store_true', help='Create the record next to the ZIP (never overwrites)')
+    sp.add_argument('--json', action='store_true')
+
     sp = sub.add_parser('activate', help='Select a ready snapshot for the atlas')
     common(sp)
     sp.add_argument('--source', required=True)
@@ -135,6 +151,21 @@ def main(argv=None) -> int:
     try:
         if args.command == 'verify-backup':
             _print(admin.verify_backup(args.metadata), args.json)
+            return 0
+        if args.command == 'archive-record':
+            kw = dict(provider=args.provider, feed_id=args.feed_id, observed_on=args.observed_on,
+                      retrieved_at=args.retrieved_at)
+            if args.write:
+                result = admin.write_archive_record(args.zip, args.source, **kw)
+                _print(result, args.json)
+                print(f"Written: {result['sidecar']} (no database was opened)")
+                return 0
+            result = admin.plan_archive_record(args.zip, args.source, **kw)
+            _print(result, args.json)
+            if result['problems']:
+                print('PREVIEW: the record would be REFUSED: ' + '; '.join(result['problems']))
+                return 2
+            print('Preview only: nothing was written. Re-run with --write to create the record.')
             return 0
         if args.command == 'restore-backup':
             result = admin.restore_backup(args.metadata, args.to, apply=args.apply)

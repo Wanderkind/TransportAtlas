@@ -21,13 +21,14 @@ function Metric({m}:{m:MetricDelta}){
 
 // Phase 7C: how each copy was obtained. An archived copy is attributed to its archive, never to a download of ours.
 const KIND_SHORT:Record<ProvenanceKind,string>={publisher_direct:'Publisher download',third_party_archived:'Archived copy',synthetic:'Synthetic fixture',unknown_legacy:'Unknown provenance'};
-const BASIS:Record<SnapshotProvenance['observation_basis'],string>={archive_record:'per the archive record',local_retrieval:'our own download',unknown:'not recorded'};
+const BASIS:Record<SnapshotProvenance['observation_basis'],string>={archive_record:'per the archive record',archive_record_date:'date only, per the archive record',local_retrieval:'our own download',unknown:'not recorded'};
 const day=(v:string|null|undefined)=>v?v.slice(0,10):'unknown';
 
 function ProvenanceCell({p}:{p:SnapshotProvenance}){
  return <td data-field="provenance" data-provenance-kind={p.kind} title={p.label}>
   <b>{KIND_SHORT[p.kind]}</b>{p.synthetic&&p.kind!=='synthetic'&&<em className="status-tag">synthetic</em>}
   {p.kind==='third_party_archived'&&p.archive&&<small data-field="archive-provider">from {p.archive.provider_name??p.archive.provider} · archive version {p.archive.version_id?.slice(0,8)??'—'} · originally published by {p.publisher.name??'unknown publisher'}; not downloaded from the publisher by this computer</small>}
+  {p.kind==='third_party_archived'&&p.archive?.acquisition_method==='authenticated_browser'&&<small data-field="acquisition">downloaded through the user's browser with their own account; delivery address not recorded</small>}
   {p.kind==='publisher_direct'&&<small>downloaded by this computer from the publisher's URL</small>}
   {p.kind==='unknown_legacy'&&<small>No usable provenance record; shown as unknown, not inferred.</small>}
   {p.license?.name&&<small data-field="license">{p.license.name}{p.license.attribution?` · ${p.license.attribution}`:''}</small>}

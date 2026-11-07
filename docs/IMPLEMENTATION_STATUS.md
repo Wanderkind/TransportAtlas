@@ -1,6 +1,20 @@
 # Implementation status — Windows local development, 2026-11-07
 
-## Current: Phase 7C archived-feed provenance
+## Current: Phase 7D1 browser-acquired archive provenance
+
+Phase 7D1 (local commit) adds a browser-download variant of the archive record and
+`manage_snapshots.py archive-record` to write it. The record is anchored on Transitland's
+public version page and the SHA-1 of the bytes, records the delivery address as unknown,
+allows a date-only archive observation, and rejects any account details. Transitland is
+enabled for this mode only; its API download mode stays disabled.
+
+Tests ran on synthetic data only: 279 passed. **The real historical ASPO ZIP has been
+verified (Phase 7D0) but no record has been written for it and it has not been imported**;
+each next step needs separate approval
+([PHASE7D1_PLAN.md](PHASE7D1_PLAN.md) §7). Phase 7D0's offline qualification is in
+[PHASE7D0_ASPO_OFFLINE_QUALIFICATION.md](PHASE7D0_ASPO_OFFLINE_QUALIFICATION.md).
+
+## Historical: Phase 7C archived-feed provenance
 
 Phase 7C (local commit, not pushed) lets a GTFS copy obtained from a third-party
 archive be imported later with **honest attribution**: `manage_snapshots.py import

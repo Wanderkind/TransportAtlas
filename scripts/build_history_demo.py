@@ -18,6 +18,10 @@ importer for v2 (services must be stopped; backups go to data/history-demo/backu
              record); then the OLDER v1 imported with --archive-provenance from the
              invented "SYNTHETIC Example Archive" (observed 2026-08-28, obtained now)
              -> v2 stays current. Mirrors the shape of the ASPO case without any real data.
+  browser-archived  Phase 7D1: as archived, but v1's record is written by
+             `manage_snapshots.py archive-record` logic for a browser download from the
+             invented "SYNTHETIC Example Browser Archive" (delivery unknown, observed on
+             2026-08-28, date only).
 """
 from __future__ import annotations
 import argparse
@@ -33,7 +37,7 @@ sys.path[:0] = [str(ROOT/'backend'), str(ROOT/'backend'/'tests')]
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--folder', type=Path, default=DEMO)
-    parser.add_argument('--admin-stage', choices=['legacy', 'preserved', 'activated', 'archived'], default='legacy')
+    parser.add_argument('--admin-stage', choices=['legacy', 'preserved', 'activated', 'archived', 'browser-archived'], default='legacy')
     args = parser.parse_args(argv)
     folder = args.folder.resolve()
     if folder != DEMO.resolve():
@@ -47,7 +51,7 @@ def main(argv=None) -> int:
     try:
         if args.admin_stage == 'legacy':
             ids = hf.import_all(con, folder/'zips', folder/'raw')
-        elif args.admin_stage == 'archived':
+        elif args.admin_stage in ('archived', 'browser-archived'):
             import json
             from datetime import datetime, timezone
             from transport_atlas.admin import sha256_file
@@ -69,7 +73,7 @@ def main(argv=None) -> int:
                    for key, source in (('v1', hf.SOURCE), ('other', hf.OTHER_SOURCE))}
     finally:
         con.close()
-    if args.admin_stage == 'archived':
+    if args.admin_stage in ('archived', 'browser-archived'):
         import archive_fixtures as af
         from datetime import datetime, timezone
         from transport_atlas import admin
@@ -79,11 +83,18 @@ def main(argv=None) -> int:
         older = incoming/'synthetic_valley_v1.zip'
         shutil.copyfile(folder/'zips'/'synthetic_valley_v1.zip', older)
         publisher = 'SYNTHETIC fixture (not a real operator)'
-        af.write(older, af.record(older, hf.SOURCE, publisher, sha256=admin.sha256_file(older),
-                                  retrieved_at=datetime.now(timezone.utc).isoformat(),
-                                  observed_at='2026-08-28T06:00:00+00:00'))
-        out = admin.apply_import(target, older, hf.SOURCE, archive=True, providers=af.PROVIDERS,
-                                 catalog_data=af.catalog(hf.SOURCE, publisher), backup_root=folder/'backups')
+        demo_catalog = af.catalog(hf.SOURCE, publisher)
+        if args.admin_stage == 'browser-archived':
+            providers = af.BROWSER_PROVIDERS
+            admin.write_archive_record(older, hf.SOURCE, provider=af.BROWSER_PROVIDER, feed_id=af.FEED_ID,
+                                       observed_on=af.OBSERVED_ON, catalog_data=demo_catalog, providers=providers)
+        else:
+            providers = af.PROVIDERS
+            af.write(older, af.record(older, hf.SOURCE, publisher, sha256=admin.sha256_file(older),
+                                      retrieved_at=datetime.now(timezone.utc).isoformat(),
+                                      observed_at='2026-08-28T06:00:00+00:00'))
+        out = admin.apply_import(target, older, hf.SOURCE, archive=True, providers=providers,
+                                 catalog_data=demo_catalog, backup_root=folder/'backups')
         ids['v1'] = out['result']['snapshot_id']
         print(f"  admin archive import v1 (selection preserved): backup {out['backup']['backup_file']}")
     elif args.admin_stage != 'legacy':

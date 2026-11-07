@@ -56,9 +56,9 @@ export type SnapshotCounts = {route_records:number;routes_with_trip_references:n
 export type ProvenanceKind = 'publisher_direct'|'third_party_archived'|'synthetic'|'unknown_legacy';
 export type SnapshotProvenance = {kind:ProvenanceKind;label:string;synthetic:boolean;
  publisher:{name:string|null;landing_url:string|null;reported_origin_url:string|null};download_origin:string|null;
- archive:{provider:string|null;provider_name:string|null;record_url:string|null;version_id:string|null;observed_at:string|null;observed_at_evidence_url:string|null;download_url:string|null}|null;
+ archive:{provider:string|null;provider_name:string|null;record_url:string|null;version_id:string|null;observed_at:string|null;observed_on?:string|null;observed_at_evidence_url:string|null;download_url:string|null;feed_id?:string|null;acquisition_method?:'provider_download'|'authenticated_browser';delivery_known?:boolean}|null;
  license:{name?:string;attribution?:string;evidence_url?:string;restrictions?:string|null}|null;
- local_retrieved_at?:string;observed_at:string|null;observation_basis:'archive_record'|'local_retrieval'|'unknown';problem?:string|null};
+ local_retrieved_at?:string;observed_at:string|null;observation_basis:'archive_record'|'archive_record_date'|'local_retrieval'|'unknown';problem?:string|null};
 export type SnapshotItem = {snapshot_id:string;source_id:string;content_sha256:string;import_status:string;selected:boolean;comparable:boolean;retrieved_at:string;retrieval_note:string;
  provenance:SnapshotProvenance;observed_at:string|null;observation_basis:SnapshotProvenance['observation_basis'];
  archive:{path:string;present:boolean;bytes:number|null;sha256_verified:boolean|null};

@@ -35,7 +35,7 @@ from .gtfs import FeedError, read_feed
 from .ingest import _validate, import_file
 from .official import ALLOWED_OFFICIAL_HOSTS, catalog, safe_url
 from .provenance import declared_info
-from .archive_provenance import (PUBLISHER_DIRECT, SYNTHETIC, THIRD_PARTY, archive_problems,
+from .archive_provenance import (PUBLISHER_DIRECT, SYNTHETIC, THIRD_PARTY, archive_problems, browser_record,
                                  classify, is_archive_record, load_providers, sha1_file)
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -660,6 +660,63 @@ def _stage_input(zip_path) -> tuple[Path, Path, Path]:
     except BaseException:
         shutil.rmtree(folder, ignore_errors=True)
         raise
+
+
+# -- Phase 7D1: writing a browser-acquired archive record (no database involved) ---------------
+
+def plan_archive_record(zip_path, source_id: str, *, provider: str, feed_id: str, observed_on: str | None,
+                        retrieved_at: str | None = None, catalog_data=None, providers=None) -> dict:
+    """Preview the archive record for a ZIP the user downloaded in a browser.
+
+    Computes SHA-1, SHA-256 and size; takes publisher and licence from the catalog; validates
+    with the same rules as the import. Opens no database and writes nothing.
+    """
+    _check_source(source_id)
+    zip_path = Path(zip_path).expanduser().resolve()
+    if not zip_path.is_file():
+        raise AdminError(f'ZIP not found: {zip_path}')
+    raw_root = (ROOT / 'data' / 'raw').resolve()
+    if zip_path.is_relative_to(raw_root):
+        raise AdminError('Refusing: the ZIP is inside data/raw. Records are written next to the downloaded file, '
+                         'never into the archive store.')
+    cat = catalog_data or catalog()
+    entry = cat['sources'].get(source_id)
+    if entry is None:
+        raise AdminError(f'{source_id!r} is not in the official catalog')
+    registry = providers if providers is not None else load_providers()
+    spec = (registry.get('providers') or {}).get(provider)
+    if spec is None:
+        raise AdminError(f'archive provider {provider!r} is not a known provider')
+    before = sha256_file(zip_path)
+    record = browser_record(zip_path, source_id=source_id, entry=entry, catalog_license=cat.get('license'),
+                            provider_key=provider, provider=spec, feed_id=feed_id, observed_on=observed_on,
+                            retrieved_at=retrieved_at)
+    if sha256_file(zip_path) != before or record['sha256'] != before:
+        raise AdminError('The ZIP changed while the record was being prepared; nothing was written.')
+    problems = archive_problems(record, source_id=source_id, sha256=record['sha256'], sha1=record['archive']['version_id'],
+                                size=record['bytes'], entry=entry, catalog_license=cat.get('license'),
+                                providers=registry)
+    sidecar = zip_path.with_suffix(zip_path.suffix + '.provenance.json')
+    if sidecar.exists():
+        problems.append(f'{sidecar.name} already exists; it is never overwritten')
+    return {'zip': str(zip_path), 'sidecar': str(sidecar), 'record': record, 'problems': problems}
+
+
+def write_archive_record(zip_path, source_id: str, **kw) -> dict:
+    """Write the previewed record with an exclusive create; refuses on any problem."""
+    plan = plan_archive_record(zip_path, source_id, **kw)
+    if plan['problems']:
+        raise AdminError('Refusing to write the archive record: ' + '; '.join(plan['problems']))
+    try:
+        with open(plan['sidecar'], 'x', encoding='utf-8') as out:
+            json.dump(plan['record'], out, indent=2)
+            out.write('\n')
+    except FileExistsError as exc:
+        raise AdminError(f'{plan["sidecar"]} appeared concurrently; not overwritten') from exc
+    if sha256_file(plan['zip']) != plan['record']['sha256']:
+        Path(plan['sidecar']).unlink()
+        raise AdminError('The ZIP changed while the record was written; the record was removed again.')
+    return {**plan, 'written': True}
 
 
 def plan_import(target: Target, zip_path, source_id: str, *, archive_dir=None, new_source=False,

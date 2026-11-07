@@ -99,10 +99,13 @@ Transitland) needs `--archive-provenance` and a separate archive provenance
 record. It is attributed to the archive, never updates the source's official
 download URL, and is never activated by the import. History shows how each copy
 was obtained and can order snapshots by archive observation time or by local
-retrieval time. Archive providers are listed in `configs/archive_providers.json`;
-**Transitland is disabled** until a reviewed change verifies its download hosts
-and the user authorizes a specific download
-([details](docs/PHASE7C_ARCHIVE_PROVENANCE.md)).
+retrieval time. Archive providers are listed in `configs/archive_providers.json`
+([details](docs/PHASE7C_ARCHIVE_PROVENANCE.md)). For Transitland, only copies
+you downloaded yourself in a browser are accepted (Phase 7D1). Write their
+record with `manage_snapshots.py archive-record`, which previews by default
+and needs `--write` to create the file. That record is anchored on the public
+version page and the archive SHA-1, and leaves the delivery address as unknown
+([details](docs/PHASE7D1_PLAN.md)). Transitland's API download mode stays disabled.
 
 ## Start and stop
 
