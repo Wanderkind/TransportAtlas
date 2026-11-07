@@ -1,7 +1,7 @@
 # Phase 7A — Safe snapshot administration
 
 Status: implemented and verified on **synthetic, temporary and disposable
-databases only**. Committed locally on `codex/local-real-feed-atlas` (based on
+databases only**. Committed locally as `6407597` on `codex/local-real-feed-atlas` (based on
 `e4db51a`); not pushed.
 
 > **No second real feed version has been obtained or imported.** The real database
