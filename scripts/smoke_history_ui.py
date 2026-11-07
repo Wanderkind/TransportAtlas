@@ -68,11 +68,16 @@ def synthetic(driver, report, sources):
     inv = api(f'history/{hf.SOURCE}/snapshots?date={DATE}')
     v1, v2 = [s['snapshot_id'] for s in inv['snapshots']]
     selection_before = [s['snapshot_id'] for s in api('snapshots')]
+    # Which version is current depends on how the demo was built (legacy importer or the
+    # Phase 7A admin stages); the History view must reflect the API, never assume v2.
+    current = next(s['snapshot_id'] for s in api('snapshots') if s['source_id'] == hf.SOURCE)
+    flag = {v1: 'true' if current == v1 else 'false', v2: 'true' if current == v2 else 'false'}
+    report['current_synthetic_version'] = 'v1' if current == v1 else 'v2'
     driver.get(BASE+f'/?date={DATE}&basemap=plain&diagnostics=1&view=history')
-    until(driver, lambda d: snapshot_rows(d) == [(v1, 'false', 'Yes'), (v2, 'true', 'Yes')], 'snapshot inventory listed')
+    until(driver, lambda d: snapshot_rows(d) == [(v1, flag[v1], 'Yes'), (v2, flag[v2], 'Yes')], 'snapshot inventory listed')
     assert Select(driver.find_element(By.CSS_SELECTOR, 'select[aria-label="History operator"]')).first_selected_option.get_attribute('value') == hf.SOURCE
     set_value(driver, 'Coverage check date', hf.ONLY_V1_DATE)
-    until(driver, lambda d: snapshot_rows(d) == [(v1, 'false', 'Yes'), (v2, 'true', 'No (service unknown)')], 'coverage follows the check date')
+    until(driver, lambda d: snapshot_rows(d) == [(v1, flag[v1], 'Yes'), (v2, flag[v2], 'No (service unknown)')], 'coverage follows the check date')
     set_value(driver, 'Coverage check date', DATE)
     until(driver, lambda d: snapshot_rows(d)[1][2] == 'Yes', 'coverage date restored')
     report['checks'].append('inventory lists both synthetic versions, the current-atlas flag and per-date coverage')
@@ -184,7 +189,7 @@ def main():
             pass
         raise
     finally:
-        write_report(f"phase6-history-{report['mode']}.json", report)
+        write_report(f"phase6-history-{report['mode']}{'-'+report['current_synthetic_version'] if report.get('current_synthetic_version') else ''}.json", report)
         driver.quit()
 
 

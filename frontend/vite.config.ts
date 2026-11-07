@@ -1,6 +1,11 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-const proxy={'/api':'http://127.0.0.1:8000'};
+// Node's process global without adding @types/node to the type-checked config.
+declare const process:{env:Record<string,string|undefined>};
+// Loopback API port (default 8000); start_local.ps1 -ApiPort sets it when Windows
+// reserves 8000 (e.g. a Hyper-V/WinNAT excluded port range).
+const apiPort=/^\d{2,5}$/.test(process.env.TRANSPORT_ATLAS_API_PORT??'')?process.env.TRANSPORT_ATLAS_API_PORT:'8000';
+const proxy={'/api':`http://127.0.0.1:${apiPort}`};
 export default defineConfig({
   plugins:[react()],
   server:{host:'127.0.0.1',port:5173,proxy},

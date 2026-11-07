@@ -1,8 +1,22 @@
 # Implementation status — Windows local development, 2026-11-07
 
-## Current: Phase 6 historical snapshot inventory and comparison
+## Current: Phase 7A safe snapshot administration
 
-Phase 6 (local commits, not pushed) adds a read-only **History** view and
+Phase 7A (local commit, not pushed) adds `scripts/manage_snapshots.py`, a CLI-only,
+preview-by-default path for listing snapshots, importing an existing local ZIP
+**without** changing the atlas selection, and selecting or restoring a snapshot
+under an expected-current precondition. Every mutation needs stopped services and
+a verified backup first. The web app stays read-only. It was exercised only on
+temporary SQLite/DuckDB databases and the synthetic demo database.
+
+**No second real feed has been obtained or imported**, the real database's
+selection was not changed, and Phase 6's real historical comparison remains
+unverified. See [PHASE7A_SNAPSHOT_ADMINISTRATION.md](PHASE7A_SNAPSHOT_ADMINISTRATION.md),
+including the Phase 7B authorization checklist.
+
+## Historical: Phase 6 historical snapshot inventory and comparison
+
+Phase 6 (pushed with authorization at `2dbc80a`; review fixes `e4db51a`) adds a read-only **History** view and
 `/api/v1/history/...` endpoints:
 - an inventory of all archived snapshots per operator, with retrieval time,
   version label, declared validity, calendar coverage, counts, archive state and
@@ -301,6 +315,9 @@ remain ignored. The README documents fresh installation and imports.
    complete licensing/attribution metadata.
    Done Phase 6: historical snapshot inventory and comparison (synthetic-verified;
    real comparison awaits a second authorized import per operator).
+   Done Phase 7A: guarded snapshot administration CLI (import without activation,
+   expected-current activation/restore, verified backups). Phase 7B (a real second
+   feed version) needs fresh authorization.
 4. Add exports, physical-stop matching and
    connectivity/accessibility analysis, then validate a second country/region.
 

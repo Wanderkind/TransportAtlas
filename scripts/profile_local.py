@@ -1,5 +1,6 @@
 """Small local HTTP latency sample, including serialized geometry payload size."""
 import json
+import os
 import argparse
 from pathlib import Path
 import statistics
@@ -19,7 +20,7 @@ def main():
     report = {}
     def request(path):
         start = time.perf_counter()
-        with urlopen('http://127.0.0.1:8000/api/v1/'+path, timeout=180) as response:
+        with urlopen(f"http://127.0.0.1:{os.environ.get('TRANSPORT_ATLAS_API_PORT') or 8000}/api/v1/"+path, timeout=180) as response:
             raw = response.read()
         return json.loads(raw), (time.perf_counter()-start)*1000, len(raw)
     paths=['network/geometry?date=2026-11-06&active_only='+('false' if args.all_imported else 'true')]

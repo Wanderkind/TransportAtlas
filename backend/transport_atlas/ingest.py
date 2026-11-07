@@ -1,4 +1,10 @@
-"""Immutable GTFS ingestion with source-scoped IDs and transactional activation."""
+"""Immutable GTFS ingestion with source-scoped IDs and transactional activation.
+
+``import_file(..., activate=True)`` (the default, used by the bootstrap importer
+``scripts/import_local_feeds.py`` and the test fixtures) selects the new snapshot in
+the same transaction that writes it. Administrative imports pass ``activate=False``
+so ``selection_members`` is never touched; see docs/PHASE7A_SNAPSHOT_ADMINISTRATION.md.
+"""
 from __future__ import annotations
 import hashlib
 import json
@@ -99,8 +105,16 @@ def _validate(data):
 
 def import_file(con, file: str | Path, *, source_id: str, archive_dir: str | Path,
                 publisher: str | None = None, landing_url: str | None = None,
-                license_name: str | None = None) -> dict:
-    """Parse+validate before BEGIN, commit source snapshot and active pointer atomically."""
+                license_name: str | None = None, activate: bool = True) -> dict:
+    """Parse+validate before BEGIN, then commit the snapshot (and, if ``activate``, the
+    selection pointer) in one transaction.
+
+    Files this call creates (the content-addressed archive and its provenance sidecar)
+    are removed again if the database transaction fails, so a failed import leaves
+    neither a half-committed database nor an unreferenced archive. A hard crash between
+    archiving and COMMIT can still leave an unreferenced archive; it is harmless (the
+    next import of the same bytes reuses it) and ``manage_snapshots.py status`` lists it.
+    """
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,79}', source_id):
         raise FeedError("source_id must contain safe ASCII letters, numbers, _ or -")
     file = Path(file)
@@ -128,6 +142,15 @@ def import_file(con, file: str | Path, *, source_id: str, archive_dir: str | Pat
     archive_path.parent.mkdir(parents=True,exist_ok=True)
     if archive_path.exists() and hashlib.sha256(archive_path.read_bytes()).hexdigest()!=digest:
         raise FeedError('Existing archive path has mismatched content; refusing to overwrite')
+    sidecar = archive_path.with_suffix('.zip.provenance.json')
+    if provenance is not None and sidecar.exists():
+        try:
+            archived_provenance = json.loads(sidecar.read_text(encoding='utf-8'))
+        except ValueError as exc:
+            raise FeedError('Existing archived provenance is unreadable; refusing to overwrite') from exc
+        if archived_provenance != provenance:
+            raise FeedError('Existing archived provenance differs; refusing to overwrite')
+    created: list[Path] = []
     if not archive_path.exists():
         temporary=archive_path.with_name(archive_path.name+'.'+uuid4().hex+'.part')
         try:
@@ -135,11 +158,12 @@ def import_file(con, file: str | Path, *, source_id: str, archive_dir: str | Pat
             if hashlib.sha256(temporary.read_bytes()).hexdigest()!=digest:
                 raise FeedError("Archived bytes did not match source hash")
             temporary.replace(archive_path)
+            created.append(archive_path)
         finally:
             temporary.unlink(missing_ok=True)
-    if provenance is not None:
-        archive_path.with_suffix('.zip.provenance.json').write_text(
-            json.dumps(provenance, indent=2), encoding='utf-8')
+    if provenance is not None and not sidecar.exists():
+        sidecar.write_text(json.dumps(provenance, indent=2), encoding='utf-8')
+        created.append(sidecar)
     calendar_dates = [service_date(r['start_date']) for r in data['calendar']] + [service_date(r['end_date']) for r in data['calendar']] + [service_date(r['date']) for r in data['calendar_dates']]
     feed_start=min(calendar_dates)
     feed_end=max(calendar_dates)
@@ -183,12 +207,28 @@ def import_file(con, file: str | Path, *, source_id: str, archive_dir: str | Pat
         issues = [(snapshot_id,'missing_shape','warning',t['trip_id'],'Trip has missing GTFS shape geometry')
                   for t in data['trips'] if not t.get('shape_id') or t['shape_id'] not in known_shapes]
         insert('qa_issues','INSERT INTO qa_issues VALUES(?,?,?,?,?)',issues)
-        con.execute('DELETE FROM selection_members WHERE source_id=?',(source_id,))
-        con.execute('INSERT INTO selection_members VALUES(?,?)',(source_id,snapshot_id))
+        if activate:
+            con.execute('DELETE FROM selection_members WHERE source_id=?',(source_id,))
+            con.execute('INSERT INTO selection_members VALUES(?,?)',(source_id,snapshot_id))
         con.commit()
-    except Exception:
+    except Exception as exc:
         con.rollback()
+        try:
+            # Never remove an archive a committed snapshot refers to (e.g. a concurrent
+            # SQLite writer that imported the same bytes first).
+            referenced = one(con,'SELECT snapshot_id FROM feed_snapshots WHERE source_id=? AND content_sha256=?',(source_id,digest))
+        except Exception:
+            referenced = True
+        if referenced and created:
+            exc.add_note('Archive files kept: a committed snapshot may reference them; check manage_snapshots.py status')
+        for path in reversed(created if not referenced else []):
+            try:
+                path.unlink(missing_ok=True)
+                exc.add_note(f'Removed unreferenced file created by this failed import: {path}')
+            except OSError as cleanup:
+                exc.add_note(f'Unreferenced file left by this failed import (remove manually): {path} ({cleanup})')
         raise
     return dict(status='imported',source_id=source_id,snapshot_id=snapshot_id,sha256=digest,
+                activated=activate,archive_created=archive_path in created,archive_path=str(archive_path),
                 feeds=dict((name,len(data[name])) for name in data if name != 'feed_info'),warnings=len(issues),
                 service_start=feed_start,service_end=feed_end)

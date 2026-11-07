@@ -1,6 +1,7 @@
 """Shared, condition-driven Selenium checks. All artifacts are new Phase 3 files."""
 from __future__ import annotations
 import json
+import os
 from pathlib import Path
 import time
 from urllib.request import urlopen
@@ -12,6 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE = ROOT / 'data/local-verification/phase3'
 SOURCES = {'arst', 'aspo', 'atp_sassari', 'trenitalia_sardegna'}
 BASE = 'http://127.0.0.1:5173'
+# Same variable start_local.ps1 -ApiPort sets (default 8000).
+API_PORT = int(os.environ.get('TRANSPORT_ATLAS_API_PORT') or 8000)
 
 # Holding happens after the real local response arrives. Ignoring its AbortSignal is
 # deliberate: the app must guard stale completions even when cancellation loses.
@@ -46,7 +49,7 @@ INTERCEPT = r"""
 """
 
 def api(path):
-    with urlopen('http://127.0.0.1:8000/api/v1/'+path, timeout=120) as response:
+    with urlopen(f'http://127.0.0.1:{API_PORT}/api/v1/'+path, timeout=120) as response:
         return json.load(response)
 
 def browser():

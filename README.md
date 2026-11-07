@@ -75,6 +75,25 @@ data does not establish absence of services.
 See [feed verification](docs/REAL_FEED_VALIDATION.md) and
 [implementation status](docs/IMPLEMENTATION_STATUS.md) for measured results.
 
+### Add a later version of a feed without changing the atlas (Phase 7A)
+
+`import_local_feeds.py` above is the **bootstrap** importer: it selects each feed
+it imports, by design. To archive an *additional* version, use the guarded
+administration CLI instead ([details](docs/PHASE7A_SNAPSHOT_ADMINISTRATION.md)).
+Every command previews by default. `--apply` requires stopped services, takes and
+verifies a backup first, and an import never changes the current selection:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/manage_snapshots.py status --db data/transport_atlas.duckdb --verify-archives
+.\.venv\Scripts\python.exe scripts/manage_snapshots.py import   --db <db> --source <id> --zip <local.zip>
+.\.venv\Scripts\python.exe scripts/manage_snapshots.py activate --db <db> --source <id> --snapshot <new> --expected-current <old>
+.\.venv\Scripts\python.exe scripts/manage_snapshots.py restore  --db <db> --source <id>
+```
+
+Mutating `data/transport_atlas.duckdb` additionally needs `--real-database`.
+**No second real feed version has been obtained or imported**; real historical
+comparison remains unverified.
+
 ## Start and stop
 
 Launch both services in hidden local processes:
@@ -253,6 +272,8 @@ The older `scripts/smoke_ui.py` expects the fictional fixture and an isolated de
 | `data/local-verification/phase4-validator/` | MobilityData validator reports (read by the source inspector) |
 | `.venv/`, `frontend/node_modules/`, `frontend/dist/` | Local environment/builds |
 
+| `data/backups/` | Verified database backups and the selection journal (`manage_snapshots.py`) |
+
 These paths are ignored by Git. Only synthetic test ZIPs belong in the repository.
 Map responses are cached in memory and on disk; selection and filter changes use
 different keys. Invalid cache files are rebuilt. Simplified shape levels are also
@@ -264,7 +285,8 @@ abandoned `.part` files older than an hour are removed. Cache files can be remov
 while services are stopped to force rebuilding.
 The application uses bounded GeoJSON, not national vector tiles. External
 MobilityData validation (Phase 4), data-quality indicators (Phase 5) and a
-historical snapshot explorer (Phase 6; synthetic-verified) are done.
+historical snapshot explorer (Phase 6; synthetic-verified) and guarded snapshot
+administration (Phase 7A; synthetic-verified, not used on the real database) are done.
 Stop-board pagination, exports,
 physical-stop matching, connectivity/accessibility analysis and multi-country
 validation remain future milestones. See the [MVP specification](docs/MVP_SPEC.md).
