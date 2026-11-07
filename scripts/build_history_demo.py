@@ -86,7 +86,9 @@ def main(argv=None) -> int:
         demo_catalog = af.catalog(hf.SOURCE, publisher)
         if args.admin_stage == 'browser-archived':
             providers = af.BROWSER_PROVIDERS
+            from transport_atlas.archive_provenance import sha1_file
             admin.write_archive_record(older, hf.SOURCE, provider=af.BROWSER_PROVIDER, feed_id=af.FEED_ID,
+                                       expected_sha1=sha1_file(older),
                                        observed_on=af.OBSERVED_ON, catalog_data=demo_catalog, providers=providers)
         else:
             providers = af.PROVIDERS

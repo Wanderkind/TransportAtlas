@@ -296,6 +296,33 @@ def create_app(db_path: str | Path | None = None,backend: str | None = None):
         except HistoryError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
 
+    @app.get('/api/v1/history/{source_id}/timetable-diff')
+    def history_timetable_diff(source_id: str, baseline: str, comparison: str, policy: str = 'same_date',
+                               date_value: date | None = Query(default=None, alias='date'),
+                               baseline_date: date | None = None, comparison_date: date | None = None,
+                               status: str = 'differences', route: str | None = None,
+                               limit: int = Query(default=100, ge=1, le=500), offset: int = Query(default=0, ge=0)):
+        try:
+            return app.state.history.timetable_diff(source_id, baseline, comparison, policy=policy,
+                                                    service_date=date_value, baseline_date=baseline_date,
+                                                    comparison_date=comparison_date, status=status, route=route,
+                                                    limit=limit, offset=offset)
+        except NotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0]))
+        except HistoryError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+    @app.get('/api/v1/history/{source_id}/timetable-trip')
+    def history_timetable_trip(source_id: str, baseline: str, comparison: str, baseline_trip: str | None = None,
+                               comparison_trip: str | None = None):
+        try:
+            return app.state.history.timetable_trip(source_id, baseline, comparison, baseline_trip=baseline_trip,
+                                                    comparison_trip=comparison_trip)
+        except NotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0]))
+        except HistoryError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
     @app.get('/api/v1/trip/{snapshot_id}/{trip_id}')
     def trip(snapshot_id:str,trip_id:str):
         try:result=trip_stop_times(app.state.con,snapshot_id,trip_id)

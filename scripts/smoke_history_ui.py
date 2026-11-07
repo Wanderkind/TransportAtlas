@@ -54,6 +54,22 @@ def records(driver, kind):
             for e in driver.find_elements(By.CSS_SELECTOR, f'.record-table[data-kind="{kind}"] tbody tr')}
 
 
+def timetable(driver, expect_changed=None):
+    """Phase 8A: the per-trip section renders, reconciles, and a changed trip expands to stop detail."""
+    until(driver, lambda d: d.find_elements(By.CSS_SELECTOR, '.timetable-changes[data-timetable-status="ok"] .timetable-counts'),
+          'timetable section')
+    counts = __import__('json').loads(driver.find_element(By.CSS_SELECTOR, '.timetable-counts').get_attribute('data-counts'))
+    if expect_changed is not None:
+        assert counts['changed'] == expect_changed, counts
+    rows = driver.find_elements(By.CSS_SELECTOR, 'tr[data-trip-status="changed"]')
+    if rows:
+        rows[0].find_element(By.CSS_SELECTOR, '.trip-expand').click()
+        until(driver, lambda d: d.find_elements(By.CSS_SELECTOR, '.trip-detail .stop-differences li, .trip-detail p.muted'),
+              'trip stop detail')
+    assert 'Equal trip totals do not mean every trip is unchanged' in text(driver, '.timetable-changes')
+    return counts
+
+
 def run_compare(driver):
     driver.find_element(By.CSS_SELECTOR, '.run-compare').click()
 
@@ -105,6 +121,7 @@ def synthetic(driver, report, sources):
     until(driver, lambda d: {k: v[0] for k, v in records(d, 'stops').items()} == {'NEW': 'added', 'OLD': 'removed', 'Q': 'modified', 'S': 'modified'}, 'stop record changes')
     assert 'SYNTHETIC Quarry → SYNTHETIC Quarry Gate' in records(driver, 'stops')['Q'][1]
     assert 'not proof' in text(driver, '.identity-note')
+    report['timetable_counts'] = timetable(driver)
     Select(driver.find_element(By.CSS_SELECTOR, 'select[aria-label="routes status filter"]')).select_by_value('all')
     until(driver, lambda d: len(records(d, 'routes')) == 7, 'all route records')
     report['same_date_screenshot'] = screenshot(driver, 'phase6-history-same-date')
@@ -202,11 +219,31 @@ def archived(driver, report, sources):
     assert side.get_attribute('data-provenance-kind') == 'third_party_archived' and 'observed 2026-08-28' in side.text, side.text
     status, cells = metric(driver, 'trip_templates_on_date')
     assert status == 'changed' and cells[1:4] == ['8', '9', '+1'], cells
+    report['timetable_counts'] = timetable(driver)
     report['archived_screenshot'] = screenshot(driver, 'phase7d1-history-browser-archived-compare' if browser
                                                else 'phase7c-history-archived-compare')
     report['checks'].append('same-date comparison of an archived older copy with the current version, with an attribution notice')
     back_to_atlas(driver, selection_before, report)
     ready(driver, DATE, set(sources) - {'none'})
+
+
+def real_comparison(driver, source, inv, current, report):
+    """Read-only same-date comparison of a real operator with an archived older snapshot."""
+    old = next(s for s in inv if s['snapshot_id'] != current)
+    assert old['provenance']['kind'] == 'third_party_archived' and old['selected'] is False
+    until(driver, lambda d: d.find_elements(By.CSS_SELECTOR, '.compare-form'), 'compare form')
+    Select(driver.find_element(By.CSS_SELECTOR, 'select[aria-label="Baseline snapshot"]')).select_by_value(old['snapshot_id'])
+    Select(driver.find_element(By.CSS_SELECTOR, 'select[aria-label="Comparison snapshot"]')).select_by_value(current)
+    run_compare(driver)
+    comparison_ready(driver, old['snapshot_id'], current, 'same_date')
+    assert not driver.find_elements(By.CSS_SELECTOR, '.synthetic-banner')
+    assert driver.find_elements(By.CSS_SELECTOR, '[data-notice="baseline_third_party_archived"]')
+    counts = timetable(driver)
+    changed = [(e.get_attribute('data-trip-record'), e.text) for e in driver.find_elements(By.CSS_SELECTOR, 'tr[data-trip-status="changed"]')]
+    report['real_timetable_screenshot'] = screenshot(driver, 'phase8a-history-real-timetable')
+    report['checks'].append(f'{source}: real same-date comparison with archived baseline; timetable counts {counts}')
+    return {'source': source, 'baseline': old['snapshot_id'], 'comparison': current, 'timetable_counts': counts,
+            'changed_trips': [c[0] for c in changed]}
 
 
 def real(driver, report):
@@ -217,17 +254,20 @@ def real(driver, report):
     until(driver, lambda d: d.find_elements(By.CSS_SELECTOR, '.history-view'), 'history view')
     seen = {}
     for source in sorted(SOURCES):
+        inv = api(f'history/{source}/snapshots?date={DATE}&sort=observed')['snapshots']
         Select(driver.find_element(By.CSS_SELECTOR, 'select[aria-label="History operator"]')).select_by_value(source)
-        until(driver, lambda d: len(snapshot_rows(d)) == 1 and d.find_elements(By.CSS_SELECTOR, f'.history-table.snapshots tr[data-snapshot-id] code'), f'{source} inventory')
+        until(driver, lambda d: [r[0] for r in snapshot_rows(d)] == [s['snapshot_id'] for s in inv], f'{source} inventory')
         expected = next(s['snapshot_id'] for s in api('snapshots') if s['source_id'] == source)
-        until(driver, lambda d: snapshot_rows(d) == [(expected, 'true', 'Yes')], f'{source} single current snapshot')
-        note = text(driver, '[data-comparison-possible="false"]')
-        assert 'no version comparison is possible' in note and not driver.find_elements(By.CSS_SELECTOR, '.compare-form')
-        kind = provenance_cells(driver)[expected][0]
-        assert kind == 'publisher_direct', (source, kind)
+        assert next(r for r in snapshot_rows(driver) if r[0] == expected)[1] == 'true'
+        assert provenance_cells(driver)[expected][0] == 'publisher_direct', source
+        if len(inv) == 1:
+            note = text(driver, '[data-comparison-possible="false"]')
+            assert 'no version comparison is possible' in note and not driver.find_elements(By.CSS_SELECTOR, '.compare-form')
+        else:
+            report['real_multi_snapshot'] = real_comparison(driver, source, inv, expected, report)
         seen[source] = expected
     report['real_sources'] = seen
-    report['checks'].append('each real operator shows its single snapshot (publisher download) and that comparison is not possible')
+    report['checks'].append('each real operator shows its snapshots and current selection; single-snapshot operators explain that comparison is impossible')
     report['real_screenshot'] = screenshot(driver, 'phase6-history-real')
     back_to_atlas(driver, selection_before, report)
     state = ready(driver, DATE, SOURCES)

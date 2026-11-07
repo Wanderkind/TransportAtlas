@@ -102,10 +102,19 @@ was obtained and can order snapshots by archive observation time or by local
 retrieval time. Archive providers are listed in `configs/archive_providers.json`
 ([details](docs/PHASE7C_ARCHIVE_PROVENANCE.md)). For Transitland, only copies
 you downloaded yourself in a browser are accepted (Phase 7D1). Write their
-record with `manage_snapshots.py archive-record`, which previews by default
-and needs `--write` to create the file. That record is anchored on the public
+record with `manage_snapshots.py archive-record --expected-sha1 <version id from the
+public version page>`, which previews by default and needs `--write` to create the file
+(written atomically, never overwriting). That record is anchored on the public
 version page and the archive SHA-1, and leaves the delivery address as unknown
 ([details](docs/PHASE7D1_PLAN.md)). Transitland's API download mode stays disabled.
+
+History's comparison also lists **per-trip timetable differences** on the chosen
+service date: changed, added, removed and ambiguous trips, with the reason for each match
+and stop-by-stop detail ([details](docs/PHASE8A_TIMETABLE_DIFF.md)). To keep a
+hash-verified local recovery bundle of the database, every archive and the evidence,
+run `python scripts/build_evidence_bundle.py --restore-test` with services stopped.
+Copy that bundle to another drive yourself
+([details](docs/PHASE7D2_EVIDENCE_AND_PROVENANCE_FIXES.md)).
 
 ## Start and stop
 

@@ -1,5 +1,5 @@
-import {useEffect, useMemo, useState} from 'react';
-import type {ComparisonRequest, HistoryRecord, HistorySource, InventorySort, MetricDelta, ProvenanceKind, RecordPage, SnapshotComparison, SnapshotInventory, SnapshotItem, SnapshotProvenance} from './api';
+import {Fragment, useEffect, useMemo, useState} from 'react';
+import type {ComparisonRequest, HistoryRecord, HistorySource, InventorySort, MetricDelta, ProvenanceKind, RecordPage, SnapshotComparison, SnapshotInventory, SnapshotItem, SnapshotProvenance, TimetableDiff, TimetableTripDetail, TripRecord} from './api';
 import {historyEndpoints} from './api';
 import {useKeyedRequest} from './useKeyedRequest';
 
@@ -95,6 +95,79 @@ function RecordTable({kind,request,requestKey}:{kind:'routes'|'stops';request:Co
  </section>;
 }
 
+const STAGE_TEXT:Record<string,string>={same_trip_id:'same trip ID',identical_timetable_new_id:'new trip ID, identical timetable',unique_similar_trip:'new trip ID, unique close match'};
+const minutes=(s?:number|null)=>s==null?'':`${s>0?'+':s<0?'−':'±'}${Math.floor(Math.abs(s)/60)} min${Math.abs(s)%60?` ${Math.abs(s)%60} s`:''}`;
+function rationale(r:TripRecord){
+ if(r.match)return `${STAGE_TEXT[r.match.stage]??r.match.stage}${r.match.stage==='unique_similar_trip'?` (route ${r.match.route_id}, direction ${r.match.direction_id??'—'}, departure ${minutes(r.match.departure_shift_seconds)}, stop similarity ${r.match.stop_sequence_similarity})`:''}`;
+ if(r.candidates)return `ambiguous: ${r.candidates.length} candidate${r.candidates.length===1?'':'s'} (${r.candidates.map(c=>`${c.baseline_trip_id}→${c.comparison_trip_id} ${minutes(c.departure_shift_seconds)}`).join(', ')})`;
+ return r.note??'';
+}
+
+/** Stop-by-stop view of one trip pair, loaded on demand. */
+function TripStops({request,record}:{request:ComparisonRequest;record:TripRecord}){
+ const b=record.baseline?.trip_id??null,c=record.comparison?.trip_id??null;
+ const res=useKeyedRequest<TimetableTripDetail>(historyEndpoints.trip(request,b,c),`${JSON.stringify(request)}|trip|${b}|${c}`);
+ if(res.error)return <p role="alert">Stops unavailable: {res.error} <button type="button" onClick={res.retry}>Retry</button></p>;
+ const d=res.data;if(!d)return <p role="status">Loading stops…</p>;
+ const one=(stops:TimetableTripDetail['baseline_stops'],label:string)=>stops&&<div className="trip-stop-list"><b>{label}</b><ol>{stops.map(s=><li key={s.sequence}>{s.name??s.stop_id} <small>{s.stop_id} · arr {s.arrival??'—'} · dep {s.departure??'—'}</small></li>)}</ol></div>;
+ return <div className="trip-detail" data-trip-detail={record.id}>
+  {d.differences?<>{!d.differences.length&&<p className="muted">Same stops and times.</p>}
+   <ul className="stop-differences">{d.differences.map((x,i)=><li key={i} data-stop-change={x.change} data-stop-id={x.stop_id}>
+    {x.change==='time'?<><b>{x.name??x.stop_id}</b> ({x.stop_id}): arr {x.baseline_arrival} → {x.comparison_arrival}, dep {x.baseline_departure} → {x.comparison_departure}{x.shift_seconds!=null?` (${minutes(x.shift_seconds)})`:''}</>
+     :x.change==='added_stop'?<><b>+ {x.name??x.stop_id}</b> ({x.stop_id}) added at position {x.comparison_sequence}, arr {x.comparison_arrival}</>
+     :<><b>− {x.name??x.stop_id}</b> ({x.stop_id}) no longer called (was position {x.baseline_sequence}, arr {x.baseline_arrival})</>}</li>)}</ul></>
+   :<div className="trip-stop-columns">{one(d.baseline_stops,'Baseline stops')}{one(d.comparison_stops,'Comparison stops')}</div>}
+  <p className="muted">{d.note}</p>
+ </div>;
+}
+
+/** Per-trip timetable differences on the selected service date (Phase 8A). */
+function TimetableChanges({request,requestKey}:{request:ComparisonRequest;requestKey:string}){
+ const [status,setStatus]=useState('differences');
+ const [route,setRoute]=useState('');
+ const [open,setOpen]=useState<string|null>(null);
+ const [pages,setPages]=useState<{key:string;items:TimetableDiff[]}>({key:'',items:[]});
+ const tableKey=`${requestKey}|timetable|${status}|${route}`;
+ const loaded=pages.key===tableKey?pages.items:[];
+ const offset=loaded.length?loaded.at(-1)!.page?.next_offset??null:0;
+ const [wanted,setWanted]=useState(0);
+ const target=loaded.length===0?0:wanted===offset&&offset!==null?offset:null;
+ const page=useKeyedRequest<TimetableDiff>(target===null?null:historyEndpoints.timetable(request,status,route,100,target),`${tableKey}|${target}`);
+ useEffect(()=>{if(page.status==='ready'&&page.data&&target!==null)setPages(p=>({key:tableKey,items:[...(p.key===tableKey?p.items:[]),page.data!].filter((x,i,all)=>all.findIndex(y=>y.page?.offset===x.page?.offset)===i)}))},[page.status,page.data,target,tableKey]);
+ const first=loaded[0]??(page.data&&target===0?page.data:null);
+ const records=loaded.flatMap(p=>p.records??[]),last=loaded.at(-1);
+ return <section className="timetable-changes" aria-label="Timetable changes on selected service date" data-timetable-status={first?.status}>
+  <div className="record-head"><h3>Timetable changes on selected service date</h3>
+   {first?.status==='ok'&&<label>Show <select aria-label="Timetable status filter" value={status} onChange={e=>{setStatus(e.target.value);setWanted(0);setOpen(null)}}>
+    {[['differences','all differences'],['changed','changed'],['added','added'],['removed','removed'],['ambiguous','ambiguous'],['unsupported','unsupported'],['unchanged','unchanged'],['all','all trips']].map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></label>}
+   {first?.status==='ok'&&<label>Route <select aria-label="Timetable route filter" value={route} onChange={e=>{setRoute(e.target.value);setWanted(0);setOpen(null)}}>
+    <option value="">all routes</option>{(first.routes??[]).map(r=><option key={r} value={r}>{r}</option>)}</select></label>}</div>
+  {page.error&&<p role="alert">Timetable differences unavailable: {page.error} <button type="button" onClick={page.retry}>Retry</button></p>}
+  {!first&&!page.error&&<p role="status">Comparing trips…</p>}
+  {first&&first.status!=='ok'&&<p className="quality-item caution" data-timetable-incomparable={first.status}>{first.status==='incomparable'?'Not comparable':'Not supported'}: {first.reason}</p>}
+  {first?.status==='ok'&&first.counts&&first.reconciliation&&<>
+   <p className="timetable-counts" data-counts={JSON.stringify(first.counts)}>
+    {first.reconciliation.baseline_trips} → {first.reconciliation.comparison_trips} trips operate on {first.service_date}: {first.counts.unchanged} unchanged, <b>{first.counts.changed} changed</b>, {first.counts.added} added, {first.counts.removed} removed, {first.counts.ambiguous} ambiguous, {first.counts.unsupported} unsupported.
+    {(first.shape_id_only_changes??0)>0&&<> {first.shape_id_only_changes} unchanged trip{first.shape_id_only_changes===1?'':'s'} only changed shape ID (geometry reference, not timetable).</>}
+    {!first.reconciliation.complete&&<b className="caution-text"> Counts do not reconcile; inspect the data.</b>}</p>
+   <p className="muted">Matched by: {Object.entries(first.matched_by??{}).map(([k,v])=>`${v} ${STAGE_TEXT[k]??k}`).join(' · ')||'none'}. Equal trip totals do not mean every trip is unchanged. {first.note}</p>
+   {last&&<div className="table-scroll"><table className="history-table trips" aria-label="Trip timetable differences"><thead><tr><th>Route</th><th>Status</th><th>Baseline trip</th><th>Comparison trip</th><th>Departure</th><th>Last arrival</th><th>Stops</th><th>Change</th><th>Match basis</th></tr></thead>
+    <tbody>{records.map(r=><Fragment key={r.id}><tr data-trip-record={r.id} data-trip-status={r.status} className={open===r.id?'expanded':''}>
+     <td>{r.route_id}</td><td><span className={`record-status ${r.status}`}>{r.status}</span></td>
+     <td><code>{r.baseline?.trip_id??'—'}</code></td><td><code>{r.comparison?.trip_id??'—'}</code></td>
+     <td>{r.baseline?.first_departure??'—'} → {r.comparison?.first_departure??'—'}</td>
+     <td>{r.baseline?.last_arrival??'—'} → {r.comparison?.last_arrival??'—'}</td>
+     <td>{r.baseline?.stop_count??'—'} → {r.comparison?.stop_count??'—'}</td>
+     <td>{r.summary??(r.status==='added'?'only in comparison':r.status==='removed'?'only in baseline':r.note??'')}{r.shape_id_changed&&<small> shape ID changed (not a timetable change)</small>}</td>
+     <td><small>{rationale(r)}</small> <button type="button" className="trip-expand" aria-expanded={open===r.id} aria-label={`Stops of ${r.id}`} onClick={()=>setOpen(open===r.id?null:r.id)}>{open===r.id?'Hide stops':'Stops'}</button></td></tr>
+     {open===r.id&&<tr className="trip-detail-row"><td colSpan={9}><TripStops request={request} record={r}/></td></tr>}</Fragment>)}</tbody></table></div>}
+   {last&&!records.length&&<p className="muted">No trips match this filter.</p>}
+   {last?.page&&<p className="muted">Showing {records.length} of {last.page.matching} matching trips.</p>}
+   {last?.page?.truncated&&<button type="button" className="load-more" disabled={page.status==='loading'} onClick={()=>setWanted(last.page!.next_offset!)}>{page.status==='loading'?'Loading…':'Load more trips'}</button>}
+  </>}
+ </section>;
+}
+
 function Comparison({request}:{request:ComparisonRequest}){
  const key=JSON.stringify(request);
  const result=useKeyedRequest<SnapshotComparison>(historyEndpoints.compare(request,'changed',1,0),`${key}|summary`);
@@ -113,6 +186,7 @@ function Comparison({request}:{request:ComparisonRequest}){
    <tbody>{SUMMARY.map(([k,label,dated])=>c.summary[k]&&<tr key={k} data-metric={k} data-metric-status={c.summary[k].status}><td title={c.definitions[k]??''}>{label}{dated&&<small> (date-dependent)</small>}</td><Metric m={c.summary[k]}/></tr>)}</tbody></table></div>
   <p className="muted">Shape IDs: {Object.entries(c.shapes.counts).map(([k,v])=>`${v} ${k}`).join(' · ')}. {c.shapes.note}</p>
   <p className="muted identity-note">{c.identity_note}</p>
+  <TimetableChanges request={request} requestKey={key}/>
   <RecordTable kind="routes" request={request} requestKey={key}/>
   <RecordTable kind="stops" request={request} requestKey={key}/>
   <details><summary>Metric definitions</summary>{Object.entries(c.definitions).map(([k,v])=><p key={k}><b>{k}</b>: {v}</p>)}</details>

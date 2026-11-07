@@ -120,6 +120,11 @@ def main(argv=None) -> int:
     sp.add_argument('--feed-id', required=True, help="The provider's feed id, e.g. f-spqb-aspoolbia")
     sp.add_argument('--acquisition', required=True, choices=['authenticated_browser'],
                     help='How the copy was obtained (only browser downloads are supported here)')
+    sp.add_argument('--expected-sha1', required=True,
+                    help='The archive version id (40-hex SHA-1) as shown on the provider\'s public version page, '
+                         'supplied independently; must equal the SHA-1 of the ZIP')
+    sp.add_argument('--expected-record-url',
+                    help='Optional: the exact public version page URL; must be the canonical page for --expected-sha1')
     sp.add_argument('--observed-on', help='Date the archive fetched it from the publisher (YYYY-MM-DD), '
                                           'as shown on the public version page')
     sp.add_argument('--retrieved-at', help='When you obtained the copy (ISO time with timezone); '
@@ -154,7 +159,8 @@ def main(argv=None) -> int:
             return 0
         if args.command == 'archive-record':
             kw = dict(provider=args.provider, feed_id=args.feed_id, observed_on=args.observed_on,
-                      retrieved_at=args.retrieved_at)
+                      retrieved_at=args.retrieved_at, expected_sha1=args.expected_sha1,
+                      expected_record_url=args.expected_record_url)
             if args.write:
                 result = admin.write_archive_record(args.zip, args.source, **kw)
                 _print(result, args.json)

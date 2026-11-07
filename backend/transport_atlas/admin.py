@@ -664,12 +664,19 @@ def _stage_input(zip_path) -> tuple[Path, Path, Path]:
 
 # -- Phase 7D1: writing a browser-acquired archive record (no database involved) ---------------
 
+SHA1_HEX = re.compile(r'[0-9a-f]{40}')
+
+
 def plan_archive_record(zip_path, source_id: str, *, provider: str, feed_id: str, observed_on: str | None,
+                        expected_sha1: str | None = None, expected_record_url: str | None = None,
                         retrieved_at: str | None = None, catalog_data=None, providers=None) -> dict:
     """Preview the archive record for a ZIP the user downloaded in a browser.
 
-    Computes SHA-1, SHA-256 and size; takes publisher and licence from the catalog; validates
-    with the same rules as the import. Opens no database and writes nothing.
+    Phase 7D2: the archive version must be supplied independently (``expected_sha1``, the
+    40-hex id read from the provider's public version page, optionally with that exact
+    ``expected_record_url``). It must equal the SHA-1 computed from the bytes; a computed
+    value is never adopted as the claimed external version. The remote page is not
+    re-verified offline; the record says so. Opens no database and writes nothing.
     """
     _check_source(source_id)
     zip_path = Path(zip_path).expanduser().resolve()
@@ -679,6 +686,11 @@ def plan_archive_record(zip_path, source_id: str, *, provider: str, feed_id: str
     if zip_path.is_relative_to(raw_root):
         raise AdminError('Refusing: the ZIP is inside data/raw. Records are written next to the downloaded file, '
                          'never into the archive store.')
+    if expected_sha1 is None:
+        raise AdminError('An independently supplied archive version is required: pass --expected-sha1 <40-hex> '
+                         '(the version id shown on the provider\'s public version page).')
+    if not isinstance(expected_sha1, str) or not SHA1_HEX.fullmatch(expected_sha1):
+        raise AdminError('--expected-sha1 must be exactly 40 lowercase hexadecimal characters')
     cat = catalog_data or catalog()
     entry = cat['sources'].get(source_id)
     if entry is None:
@@ -687,35 +699,92 @@ def plan_archive_record(zip_path, source_id: str, *, provider: str, feed_id: str
     spec = (registry.get('providers') or {}).get(provider)
     if spec is None:
         raise AdminError(f'archive provider {provider!r} is not a known provider')
+    pattern = (spec.get('browser_acquisition') or {}).get('record_url_pattern')
+    canonical = pattern.format(feed_id=feed_id, sha1=expected_sha1) if pattern else None
+    problems = []
+    if expected_record_url is not None and expected_record_url != canonical:
+        problems.append(f'--expected-record-url is not the canonical version page for the expected SHA-1 '
+                        f'({canonical})')
     before = sha256_file(zip_path)
+    computed_sha1 = sha1_file(zip_path)
+    if computed_sha1 != expected_sha1:
+        problems.append(f'the ZIP\'s SHA-1 {computed_sha1} does not equal the expected archive version '
+                        f'{expected_sha1}; refusing (the computed value is never adopted as the claim)')
     record = browser_record(zip_path, source_id=source_id, entry=entry, catalog_license=cat.get('license'),
                             provider_key=provider, provider=spec, feed_id=feed_id, observed_on=observed_on,
                             retrieved_at=retrieved_at)
-    if sha256_file(zip_path) != before or record['sha256'] != before:
+    if sha256_file(zip_path) != before or record['sha256'] != before or sha1_file(zip_path) != computed_sha1:
         raise AdminError('The ZIP changed while the record was being prepared; nothing was written.')
-    problems = archive_problems(record, source_id=source_id, sha256=record['sha256'], sha1=record['archive']['version_id'],
-                                size=record['bytes'], entry=entry, catalog_license=cat.get('license'),
-                                providers=registry)
+    record['archive']['version_anchor'] = {
+        'expected_version_id': expected_sha1, 'record_url': canonical,
+        'method': 'supplied independently by the operator from the public version page; equals the computed SHA-1',
+        'remote_page_reverified_offline': False}
+    problems += archive_problems(record, source_id=source_id, sha256=record['sha256'], sha1=computed_sha1,
+                                 size=record['bytes'], entry=entry, catalog_license=cat.get('license'),
+                                 providers=registry)
     sidecar = zip_path.with_suffix(zip_path.suffix + '.provenance.json')
     if sidecar.exists():
         problems.append(f'{sidecar.name} already exists; it is never overwritten')
     return {'zip': str(zip_path), 'sidecar': str(sidecar), 'record': record, 'problems': problems}
 
 
+def _write_record_bytes(path: Path, data: bytes) -> None:
+    """Write and fsync a temporary record file (separate for failure-injection tests)."""
+    with open(path, 'xb') as out:
+        out.write(data)
+        out.flush()
+        os.fsync(out.fileno())
+
+
+def _publish_no_clobber(temporary: Path, final: Path) -> None:
+    """Atomically make ``final`` refer to ``temporary``'s bytes, failing if ``final`` exists.
+
+    ``os.link`` creates the new name atomically and never replaces an existing file on
+    NTFS and POSIX filesystems. Filesystems without hard links (e.g. FAT32/exFAT) raise,
+    and the caller then fails closed instead of falling back to a clobbering rename.
+    """
+    os.link(temporary, final)
+
+
 def write_archive_record(zip_path, source_id: str, **kw) -> dict:
-    """Write the previewed record with an exclusive create; refuses on any problem."""
+    """Write the previewed record atomically, never replacing an existing file.
+
+    The record goes to a unique temporary sibling (written, flushed, fsynced), is published
+    with a no-clobber hard link, and the temporary name is always removed. If the ZIP
+    changes before publication, nothing is published; if it changes right after, only the
+    record this call published (same file identity) is removed, never one made by another
+    process.
+    """
     plan = plan_archive_record(zip_path, source_id, **kw)
     if plan['problems']:
         raise AdminError('Refusing to write the archive record: ' + '; '.join(plan['problems']))
+    final = Path(plan['sidecar'])
+    temporary = final.with_name(final.name + f'.{uuid4().hex}.part')
+    data = (json.dumps(plan['record'], indent=2) + '\n').encode('utf-8')
+    published = False
     try:
-        with open(plan['sidecar'], 'x', encoding='utf-8') as out:
-            json.dump(plan['record'], out, indent=2)
-            out.write('\n')
-    except FileExistsError as exc:
-        raise AdminError(f'{plan["sidecar"]} appeared concurrently; not overwritten') from exc
-    if sha256_file(plan['zip']) != plan['record']['sha256']:
-        Path(plan['sidecar']).unlink()
-        raise AdminError('The ZIP changed while the record was written; the record was removed again.')
+        _write_record_bytes(temporary, data)
+        if temporary.read_bytes() != data:
+            raise AdminError('Temporary record does not contain the intended bytes; nothing was published.')
+        if sha256_file(plan['zip']) != plan['record']['sha256']:
+            raise AdminError('The ZIP changed while the record was written; nothing was published.')
+        try:
+            _publish_no_clobber(temporary, final)
+        except FileExistsError as exc:
+            raise AdminError(f'{final} appeared concurrently; not overwritten') from exc
+        except OSError as exc:
+            raise AdminError(f'This filesystem cannot publish the record without risking an overwrite '
+                             f'({exc}); nothing was published.') from exc
+        published = True
+        if sha256_file(plan['zip']) != plan['record']['sha256']:
+            if final.exists() and os.path.samefile(final, temporary):
+                final.unlink()
+                published = False
+            raise AdminError('The ZIP changed while the record was published; the record was removed again.')
+    finally:
+        temporary.unlink(missing_ok=True)
+    if not published or final.read_bytes() != data:
+        raise AdminError(f'{final} does not hold the intended record; inspect it manually')
     return {**plan, 'written': True}
 
 

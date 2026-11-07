@@ -32,7 +32,11 @@ from .test_phase7c_archive_provenance import CATALOG, PUB, SRC, ArchEnv
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def kw(**extra):
+def kw(zip_path=None, **extra):
+    """Record-helper arguments; the expected SHA-1 is the one an operator would read from the
+    provider's version page (here: of the fixture ZIP, supplied independently of the helper)."""
+    if zip_path is not None:
+        extra.setdefault('expected_sha1', sha1_file(zip_path))
     return {**dict(provider=af.BROWSER_PROVIDER, feed_id=af.FEED_ID, observed_on=af.OBSERVED_ON,
                    catalog_data=CATALOG, providers=af.BROWSER_PROVIDERS), **extra}
 
@@ -43,7 +47,7 @@ class BrowserEnv(ArchEnv):
     def __init__(self, tmp, backend):
         super().__init__(tmp, backend)
         Path(str(self.older) + '.provenance.json').unlink()  # drop the 7C record
-        self.written = admin.write_archive_record(self.older, SRC, **kw())
+        self.written = admin.write_archive_record(self.older, SRC, **kw(self.older))
         self.record = self.written['record']
 
     def kw(self, **extra):
@@ -74,7 +78,7 @@ def _zip(tmp_path, key='v1'):
 def test_helper_previews_then_writes_once_without_touching_the_zip(tmp_path):
     path = _zip(tmp_path)
     digest, mtime = admin.sha256_file(path), path.stat().st_mtime_ns
-    plan = admin.plan_archive_record(path, SRC, **kw())
+    plan = admin.plan_archive_record(path, SRC, **kw(path))
     side = Path(plan['sidecar'])
     assert plan['problems'] == [] and not side.exists()
     rec, arc = plan['record'], plan['record']['archive']
@@ -88,33 +92,33 @@ def test_helper_previews_then_writes_once_without_touching_the_zip(tmp_path):
     assert datetime.fromisoformat(rec['retrieved_at']) == datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
     assert rec['publisher'] == {'name': PUB, 'landing_url': CATALOG['sources'][SRC]['landing_url']}
     assert rec['license']['name'] == 'CC-BY-4.0' and 'not endorsed by the publisher' in rec['license']['attribution']
-    out = admin.write_archive_record(path, SRC, **kw())
+    out = admin.write_archive_record(path, SRC, **kw(path))
     assert out['written'] and json.loads(side.read_text(encoding='utf-8')) == out['record']
     with pytest.raises(admin.AdminError, match='already exists'):
-        admin.write_archive_record(path, SRC, **kw())
+        admin.write_archive_record(path, SRC, **kw(path))
     assert admin.sha256_file(path) == digest and path.stat().st_mtime_ns == mtime
     stated = admin.plan_archive_record(path, SRC,
-                                       **kw(retrieved_at='2026-11-07T11:00:00+00:00'))
+                                       **kw(path, retrieved_at='2026-11-07T11:00:00+00:00'))
     assert stated['record']['retrieved_at_basis'] == 'stated_by_user'
 
 
 def test_helper_refuses_problems_and_paths_inside_the_archive_store(tmp_path, monkeypatch):
     path = _zip(tmp_path)
     with pytest.raises(admin.AdminError, match='Refusing to write'):
-        admin.write_archive_record(path, SRC, **kw(observed_on='2099-01-01'))
+        admin.write_archive_record(path, SRC, **kw(path, observed_on='2099-01-01'))
     assert not Path(str(path) + '.provenance.json').exists()
     disabled = json.loads(json.dumps(af.BROWSER_PROVIDERS))
     disabled['providers'][af.BROWSER_PROVIDER]['browser_acquisition']['enabled'] = False
     assert any('does not accept browser-acquired' in p for p in
-               admin.plan_archive_record(path, SRC, **{**kw(), 'providers': disabled})['problems'])
+               admin.plan_archive_record(path, SRC, **{**kw(path), 'providers': disabled})['problems'])
     with pytest.raises(admin.AdminError, match='not in the official catalog'):
-        admin.plan_archive_record(path, 'not_in_catalog', **kw())
+        admin.plan_archive_record(path, 'not_in_catalog', **kw(path))
     monkeypatch.setattr(admin, 'ROOT', tmp_path)
     inside = tmp_path / 'data' / 'raw' / SRC / 'x.zip'
     inside.parent.mkdir(parents=True)
     shutil.copyfile(path, inside)
     with pytest.raises(admin.AdminError, match='inside data/raw'):
-        admin.plan_archive_record(inside, SRC, **kw())
+        admin.plan_archive_record(inside, SRC, **kw(inside))
 
 
 # -- import and read side ---------------------------------------------------------------------
@@ -282,7 +286,7 @@ def test_cli_archive_record_previews_by_default(tmp_path):
     path = _zip(tmp_path)
     cmd = [sys.executable, str(ROOT / 'scripts' / 'manage_snapshots.py'), 'archive-record', '--zip', str(path),
            '--source', 'not_in_catalog', '--provider', 'transitland', '--feed-id', 'f-x', '--acquisition',
-           'authenticated_browser', '--observed-on', '2026-08-28']
+           'authenticated_browser', '--observed-on', '2026-08-28', '--expected-sha1', sha1_file(path)]
     done = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
     assert done.returncode == 2 and 'not in the official catalog' in done.stderr
     done = subprocess.run(cmd + ['--write'], capture_output=True, text=True, cwd=ROOT)

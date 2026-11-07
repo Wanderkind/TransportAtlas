@@ -1,6 +1,29 @@
 # Implementation status — Windows local development, 2026-11-07
 
-## Current: Phase 7D1 browser-acquired archive provenance
+## Current: Phase 8A per-trip timetable differences and Phase 7D2 hardening
+
+**Phase 8A** (local commit) adds per-trip timetable differences to History, with a new API
+(`timetable-diff`, `timetable-trip`) and a "Timetable changes on selected service date" section.
+It compares operating trips on one service date, matches them conservatively (same trip ID, then
+identical timetable under a new ID, then a unique close match) and never forces a match.
+`shape_id`-only changes are not timetable changes. For the real ASPO pair on 2026-11-06 it shows
+317 unchanged trips (295 with only a renumbered shape ID) and **2 changed**: route 06 at 06:25
+(72 → 76 stops) and route 11 (13:00 → 13:05). This reproduces Phase 7D0. See
+[PHASE8A_TIMETABLE_DIFF.md](PHASE8A_TIMETABLE_DIFF.md).
+
+**Phase 7D2:**
+- **Recovery bundle:** a hash-verified local bundle of the post-import state at
+  `data/backups/phase7d2-post-import-evidence-20261107T130434Z/` (28 files, all OK), with a
+  restore test. An **off-disk copy still needs your action**.
+- **`archive-record` hardening:** it now requires an independently supplied `--expected-sha1`, and
+  it writes records atomically without ever overwriting (temporary file, fsync, no-clobber hard
+  link, failing closed where hard links are unsupported).
+
+No real-database mutation in either phase: the database is still SHA-256 `1deb031a…`, with the
+selection unchanged. See
+[PHASE7D2_EVIDENCE_AND_PROVENANCE_FIXES.md](PHASE7D2_EVIDENCE_AND_PROVENANCE_FIXES.md).
+
+## Historical: Phase 7D1 browser-acquired archive provenance
 
 Phase 7D1 (local commit) adds a browser-download variant of the archive record and
 `manage_snapshots.py archive-record` to write it. The record is anchored on Transitland's

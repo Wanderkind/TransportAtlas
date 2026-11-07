@@ -38,6 +38,7 @@ from .archive_provenance import THIRD_PARTY, classify
 from .quality import validation_record, version_date
 from .schedule import active_services
 from .storage import one, rows
+from . import timetable_diff as ttd
 
 ROUTE_FIELDS = ('agency_id', 'short_name', 'long_name', 'route_type', 'route_color', 'headsigns')
 STOP_FIELDS = ('name', 'location_type', 'parent_station')
@@ -332,18 +333,7 @@ class SnapshotHistory:
                             'text': (f'Both the feed version and the service date differ ({day_a} vs {day_b}). Differences are '
                                      'not attributable to the feed update alone, and this is not a timetable-revision comparison.')})
         pa, pb = self.provenance(base), self.provenance(comp)
-        for prov, role in ((pa, 'baseline'), (pb, 'comparison')):
-            if prov['kind'] == THIRD_PARTY:
-                archive = prov['archive'] or {}
-                browser = archive.get('acquisition_method') == 'authenticated_browser'
-                date_only = ' (date only)' if prov['observation_basis'] == 'archive_record_date' else ''
-                notices.append({'code': f'{role}_third_party_archived', 'level': 'info',
-                                'text': (f"The {role} is an archived copy from {archive.get('provider_name') or 'a third-party archive'}"
-                                         f"{', downloaded through the user’s browser; delivery address not recorded' if browser else ''}"
-                                         f" (archive observation {(prov['observed_at'] or 'unknown')[:10]}{date_only}; obtained locally "
-                                         f"{prov['local_retrieved_at'][:10]}), originally published by "
-                                         f"{prov['publisher']['name'] or 'the publisher'}. It was not downloaded from the "
-                                         'publisher by this computer.')})
+        notices += _provenance_notices(pa, pb)
         for metrics, snap, role in ((ma, base, 'baseline'), (mb, comp, 'comparison')):
             if not metrics['available']:
                 notices.append({'code': f'{role}_date_outside_coverage', 'level': 'caution', 'text': metrics['reason']})
@@ -376,6 +366,82 @@ class SnapshotHistory:
                        'note': ('Shape IDs compared by their exact point sequences. A changed or new shape ID is a '
                                 'source-geometry record difference, not a verified change of physical path.')},
         }
+
+    # -- Phase 8A: per-trip timetable differences ------------------------------------------
+    def timetable_diff(self, source_id: str, baseline_id: str, comparison_id: str, *, policy: str = 'same_date',
+                       service_date: date | None = None, baseline_date: date | None = None,
+                       comparison_date: date | None = None, status: str = 'differences', route: str | None = None,
+                       limit: int = 100, offset: int = 0) -> dict:
+        """Read-only per-trip comparison on one service date (see timetable_diff.py)."""
+        if one(self.con, 'SELECT source_id FROM feed_sources WHERE source_id=?', (source_id,)) is None:
+            raise NotFound(f'Unknown source {source_id}')
+        base, comp = self.snapshot(baseline_id), self.snapshot(comparison_id)
+        for snap, role in ((base, 'baseline'), (comp, 'comparison')):
+            if snap['source_id'] != source_id:
+                raise HistoryError(f"The {role} snapshot belongs to source {snap['source_id']}, not {source_id}; "
+                                   'snapshots of different operators are never compared.')
+            if snap['import_status'] != 'ready':
+                raise HistoryError(f"The {role} snapshot is not ready (status {snap['import_status']}).")
+        if policy not in POLICIES:
+            raise HistoryError(f'Unknown date policy {policy!r}; use same_date or different_dates.')
+        if status not in ttd.FILTERS:
+            raise HistoryError(f'status must be one of {", ".join(ttd.FILTERS)}.')
+        pa, pb = self.provenance(base), self.provenance(comp)
+        head = {'source_id': source_id, 'policy': policy, 'note': ttd.NOTE, 'matching': ttd.MATCHING,
+                'synthetic': self._synthetic(base) or self._synthetic(comp),
+                'notices': _provenance_notices(pa, pb)}
+        if policy != 'same_date':
+            return {**head, 'status': 'incomparable', 'service_date': None,
+                    'reason': ('Per-trip timetable differences are defined only for the same service date in both '
+                               'versions. With two different dates, trips differ because the dates differ.')}
+        if service_date is None or baseline_date or comparison_date:
+            raise HistoryError('same_date requires date= and no baseline_date/comparison_date.')
+        ma, mb = self.day_metrics(base, service_date), self.day_metrics(comp, service_date)
+        head.update(service_date=service_date.isoformat(), baseline=_side(base, service_date, ma, pa),
+                    comparison=_side(comp, service_date, mb, pb))
+        if not (ma['available'] and mb['available']):
+            return {**head, 'status': 'incomparable',
+                    'reason': ' '.join(m['reason'] for m in (ma, mb) if not m['available'])}
+        key = ('timetable', baseline_id, comparison_id, service_date.isoformat())
+        with self._lock:
+            full = self._compare_cache.get(key)
+        if full is None:
+            try:
+                full = ttd.diff_trips(ttd.operating_trips(self.con, baseline_id, service_date),
+                                      ttd.operating_trips(self.con, comparison_id, service_date))
+            except OverflowError as exc:
+                return {**head, 'status': 'unsupported',
+                        'reason': f'{exc.args[0]} operating trips exceed the per-version cap of {ttd.MAX_TRIPS_PER_SIDE}.'}
+            with self._lock:
+                self._compare_cache[key] = full
+                if len(self._compare_cache) > 64:
+                    self._compare_cache.pop(next(iter(self._compare_cache)))
+        result = {**head, 'status': 'ok', 'reason': None, **ttd.page(full, status=status, route=route, limit=limit,
+                                                                     offset=offset)}
+        if baseline_id == comparison_id:
+            result['notices'] = result['notices'] + [{'code': 'same_snapshot', 'level': 'caution',
+                                                      'text': 'Both sides are the same feed version; every trip is unchanged.'}]
+        if not full['reconciliation']['baseline_trips'] and not full['reconciliation']['comparison_trips']:
+            result['notices'] = result['notices'] + [{'code': 'no_service', 'level': 'info',
+                                                      'text': 'Neither version schedules any trip on this date.'}]
+        return result
+
+    def timetable_trip(self, source_id: str, baseline_id: str, comparison_id: str, *,
+                       baseline_trip: str | None, comparison_trip: str | None) -> dict:
+        """Stop-by-stop view of one trip pair (or one side of an added/removed trip)."""
+        if not (baseline_trip or comparison_trip):
+            raise HistoryError('Give baseline_trip and/or comparison_trip.')
+        base, comp = self.snapshot(baseline_id), self.snapshot(comparison_id)
+        for snap, role in ((base, 'baseline'), (comp, 'comparison')):
+            if snap['source_id'] != source_id:
+                raise HistoryError(f"The {role} snapshot belongs to source {snap['source_id']}, not {source_id}; "
+                                   'snapshots of different operators are never compared.')
+        a = ttd.single_trip(self.con, baseline_id, baseline_trip) if baseline_trip else None
+        b = ttd.single_trip(self.con, comparison_id, comparison_trip) if comparison_trip else None
+        if (baseline_trip and a is None) or (comparison_trip and b is None):
+            raise NotFound('Trip not found in that snapshot')
+        names = lambda sid: {k: v['name'] for k, v in self._facts(sid)['stops'].items()}  # noqa: E731
+        return {'source_id': source_id, **ttd.trip_detail(a, b, names(baseline_id), names(comparison_id))}
 
     def _synthetic(self, snap) -> bool:
         """Fixture feeds are named SYNTHETIC by their agency; never present them as observed history."""
@@ -458,6 +524,23 @@ def _route_view(r):
 
 def _stop_view(s):
     return None if s is None else {k: s.get(k) for k in ('name', 'lat', 'lon', 'location_type', 'parent_station')}
+
+
+def _provenance_notices(pa: dict, pb: dict) -> list[dict]:
+    notices = []
+    for prov, role in ((pa, 'baseline'), (pb, 'comparison')):
+        if prov['kind'] == THIRD_PARTY:
+            archive = prov['archive'] or {}
+            browser = archive.get('acquisition_method') == 'authenticated_browser'
+            date_only = ' (date only)' if prov['observation_basis'] == 'archive_record_date' else ''
+            notices.append({'code': f'{role}_third_party_archived', 'level': 'info',
+                            'text': (f"The {role} is an archived copy from {archive.get('provider_name') or 'a third-party archive'}"
+                                     f"{', downloaded through the user’s browser; delivery address not recorded' if browser else ''}"
+                                     f" (archive observation {(prov['observed_at'] or 'unknown')[:10]}{date_only}; obtained locally "
+                                     f"{prov['local_retrieved_at'][:10]}), originally published by "
+                                     f"{prov['publisher']['name'] or 'the publisher'}. It was not downloaded from the "
+                                     'publisher by this computer.')})
+    return notices
 
 
 def _side(snap, day, metrics, prov):

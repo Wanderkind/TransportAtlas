@@ -244,15 +244,24 @@ def real_db():
     con.close()
 
 
-def test_real_database_has_one_version_per_source_and_stays_unchanged(real_db):
+def test_real_database_history_invariants(real_db):
+    """One selected publisher-direct snapshot per source; any other snapshot is an unselected,
+    ready, hash-verified archived copy (since Phase 7D1: ASPO 396fbbac). Read-only."""
     con, path = real_db
     history = SnapshotHistory(con, validation_folder=ROOT/'data'/'local-verification'/'phase4-validator')
     for source in history.sources():
-        assert source['ready_snapshots'] == 1 and not source['comparison_possible']
-        inv = history.inventory(source['source_id'], D('2026-11-06'))
-        [snap] = inv['snapshots']
-        assert snap['selected'] and snap['archive']['present'] and 'no version comparison' in inv['note']
+        inv = history.inventory(source['source_id'], D('2026-11-06'), verify_archives=True)
+        selected = [s for s in inv['snapshots'] if s['selected']]
+        others = [s for s in inv['snapshots'] if not s['selected']]
+        assert len(selected) == 1 and source['comparison_possible'] == (source['ready_snapshots'] >= 2)
+        [snap] = selected
+        assert snap['archive']['present'] and snap['provenance']['kind'] == 'publisher_direct'
         assert snap['validation'] is not None and snap['validation']['errors'] == 0
+        for other in others:
+            assert other['import_status'] == 'ready' and other['archive']['sha256_verified']
+            assert other['provenance']['kind'] == 'third_party_archived'
+        if not others:
+            assert 'no version comparison' in inv['note']
 
 
 # --- Review fixes (post-2dbc80a): policy-scoped cache and partial coordinates ----------

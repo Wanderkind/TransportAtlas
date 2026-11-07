@@ -641,9 +641,12 @@ def test_real_database_preflight_is_read_only():
     assert report['database']['real_atlas_database']
     assert len(report['sources']) == 4
     for src in report['sources']:
-        [snap] = src['snapshots']
-        assert snap['selected'] and snap['import_status'] == 'ready'
-        assert snap['archive']['present'] and snap['archive']['sha256_verified'] and snap['archive']['provenance_sidecar']
+        # One selected snapshot per source; since Phase 7D1 ASPO also holds an unselected archived copy.
+        assert sum(snap['selected'] for snap in src['snapshots']) == 1
+        for snap in src['snapshots']:
+            assert snap['import_status'] == 'ready'
+            assert snap['archive']['present'] and snap['archive']['sha256_verified'] and snap['archive']['provenance_sidecar']
+            assert snap['provenance_kind'] == ('publisher_direct' if snap['selected'] else 'third_party_archived')
     assert admin.sha256_file(path) == sha
 
 

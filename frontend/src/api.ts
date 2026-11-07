@@ -76,9 +76,26 @@ export type SnapshotComparison = {source_id:string;policy:'same_date'|'different
  notices:Array<{code:string;level:string;text:string}>;identity_note:string;definitions:Record<string,string>;summary:Record<string,MetricDelta>;
  routes:RecordPage;stops:RecordPage;shapes:{counts:Record<string,number>;note:string}};
 export type ComparisonRequest = {source:string;baseline:string;comparison:string;policy:'same_date'|'different_dates';date:string;baselineDate:string;comparisonDate:string};
+// Phase 8A: per-trip timetable differences on one service date (read-only).
+export type TripStatus='changed'|'added'|'removed'|'ambiguous'|'unsupported'|'unchanged';
+export type TripView={trip_id:string;route_id:string;direction_id:number|null;headsign:string|null;service_id:string;shape_id:string|null;first_departure:string|null;last_arrival:string|null;stop_count:number};
+export type TripMatch={stage:'same_trip_id'|'identical_timetable_new_id'|'unique_similar_trip';confidence:string;departure_shift_seconds?:number;stop_sequence_similarity?:number;route_id?:string;direction_id?:number|null};
+export type TripCandidate={baseline_trip_id:string;comparison_trip_id:string;departure_shift_seconds:number;stop_sequence_similarity:number};
+export type TripRecord={id:string;status:TripStatus;route_id:string;departure:string|null;baseline:TripView|null;comparison:TripView|null;match:TripMatch|null;change_kinds:string[];summary:string|null;shape_id_changed:boolean;candidates?:TripCandidate[];note?:string};
+export type TimetableDiff={source_id:string;policy:string;status:'ok'|'incomparable'|'unsupported';reason:string|null;service_date:string|null;note:string;matching:Record<string,string>;synthetic:boolean;
+ notices:Array<{code:string;level:string;text:string}>;counts?:Record<TripStatus,number>;matched_by?:Record<string,number>;
+ reconciliation?:{baseline_trips:number;baseline_accounted:number;comparison_trips:number;comparison_accounted:number;complete:boolean};shape_id_only_changes?:number;
+ records?:TripRecord[];routes?:string[];page?:{status_filter:string;route_filter:string|null;matching:number;offset:number;limit:number;truncated:boolean;next_offset:number|null}};
+export type TripStop={sequence:number;stop_id:string;name:string|null;arrival:string|null;departure:string|null};
+export type TripDifference={change:'time'|'added_stop'|'removed_stop';stop_id:string;name?:string|null;baseline_sequence?:number;comparison_sequence?:number;baseline_arrival?:string|null;comparison_arrival?:string|null;baseline_departure?:string|null;comparison_departure?:string|null;shift_seconds?:number|null};
+export type TimetableTripDetail={baseline:TripView|null;comparison:TripView|null;baseline_stops:TripStop[]|null;comparison_stops:TripStop[]|null;differences:TripDifference[]|null;note:string};
 export const historyEndpoints={
  sources:'/api/v1/history/sources',
  snapshots:(source:string,d:string,sort:InventorySort='retrieved')=>`/api/v1/history/${q(source)}/snapshots?date=${q(d)}&sort=${sort}`,
  compare:(r:ComparisonRequest,status='changed',limit=100,offset=0)=>`/api/v1/history/${q(r.source)}/compare?baseline=${q(r.baseline)}&comparison=${q(r.comparison)}&policy=${r.policy}`+
    (r.policy==='same_date'?`&date=${q(r.date)}`:`&baseline_date=${q(r.baselineDate)}&comparison_date=${q(r.comparisonDate)}`)+`&record_status=${q(status)}&record_limit=${limit}&record_offset=${offset}`,
+ timetable:(r:ComparisonRequest,status='differences',route='',limit=100,offset=0)=>`/api/v1/history/${q(r.source)}/timetable-diff?baseline=${q(r.baseline)}&comparison=${q(r.comparison)}&policy=${r.policy}`+
+   (r.policy==='same_date'?`&date=${q(r.date)}`:`&baseline_date=${q(r.baselineDate)}&comparison_date=${q(r.comparisonDate)}`)+`&status=${q(status)}${route?`&route=${q(route)}`:''}&limit=${limit}&offset=${offset}`,
+ trip:(r:ComparisonRequest,baselineTrip:string|null,comparisonTrip:string|null)=>`/api/v1/history/${q(r.source)}/timetable-trip?baseline=${q(r.baseline)}&comparison=${q(r.comparison)}`+
+   (baselineTrip?`&baseline_trip=${q(baselineTrip)}`:'')+(comparisonTrip?`&comparison_trip=${q(comparisonTrip)}`:''),
 };
