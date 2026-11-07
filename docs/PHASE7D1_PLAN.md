@@ -213,5 +213,59 @@ tests cover:
   History check all passed.
 
 **Real database:** SHA-256 `3c308708…3ca0` and modification time 2026-11-06 17:33:51, unchanged
-before and after every run. Services are stopped afterwards. The real
+before and after every run. Services are stopped afterwards.
+
+## 9. Real import and first genuine same-date comparison (2026-11-07, each step approved)
+
+1. **Record preview** (`archive-record`, no write): passed with no problems.
+2. **Record written** (`--write`): `data/downloads/archive/transitland/aspo/f-spqb-aspoolbia-b48388a2….zip.provenance.json`
+   (SHA-256 `08fb5a07…e007`).
+   - Content: version `b48388a2…`, `authenticated_browser`, delivery `unknown`, no download address,
+     observed on 2026-08-28, retrieved 2026-11-07T11:21:10Z (file modification time).
+   - The ZIP was unchanged.
+3. **Import preview** (`import --archive-provenance --real-database`, no `--apply`): no problems.
+   The selection would stay `2fdf3861…`.
+4. **Import applied** (`--apply`, services stopped):
+   - **Backup:** `data/backups/transport_atlas-20261107T122036599403Z-64c8d142/`, SHA-256 `3c308708…`
+     (the pre-import database), checked with `verify-backup`.
+   - **New snapshot** `396fbbacf74f0ad576e6d7919ec3092b`, ready: 17 routes, 423 stops, 496 trips,
+     18,461 stop times.
+   - **Archive:** `data/raw/aspo/372e851c….zip`, SHA-1 `b48388a2…` verified. The archived record's
+     content is identical to the written one; its bytes differ (`27fcfd60…`) because the importer
+     re-serialises the JSON.
+   - **Database afterwards:** SHA-256 `1deb031a…e543ab`.
+   - **Unrelated processes:** two short-lived `python.exe` processes were seen just before the
+     import and had exited before they could be identified. DuckDB granted the import exclusive
+     write access, so neither held the database.
+5. **Checks after import (read-only):**
+   - selection unchanged: arst `52a339e0…`, aspo `2fdf3861…`, atp_sassari `2f029bb3…`,
+     trenitalia_sardegna `9208278…`;
+   - the aspo `download_url` is still `https://www.aspo.it/wp-content/uploads/open_data.zip`;
+   - 5 snapshots in total;
+   - both ASPO archives verify by hash.
+
+   The evidence manifest `data/local-verification/phase7d0/SHA256SUMS` lists all 7 files, and all
+   check OK.
+6. **History in the browser** (real database, production build, port 8765):
+   - **Inventory:** ASPO lists 2 snapshots. The archived copy shows as "observed 2026-08-28, date
+     only, per the archive record; obtained locally 2026-11-07 11:21:10", with the browser and
+     delivery-unknown note and the CC BY 4.0 attribution. The current one shows as a publisher
+     download.
+   - **Comparison:** `same_date` on 2026-11-06, baseline `396fbbac` (archived), comparison
+     `2fdf3861` (current).
+     - unchanged: trips on the date 319 → 319, exact instances 319 → 319, routes scheduled
+       15 → 15, stops served 421 → 421;
+     - changed: route records 17 → 15, stop records 423 → 422, trip templates 496 → 394,
+       shape IDs 79 → 68;
+     - route records: `05PI` and `05PR` removed, `12` and `2S` renamed. Stop `1059` removed.
+     - one notice: the baseline is an archived Transitland copy, downloaded through the user's
+       browser, delivery not recorded, not downloaded from the publisher by this computer.
+   - **Synthetic flag:** off.
+   - **Console:** no errors.
+   - **Back to atlas:** the selection is unchanged. With services stopped, the database is still
+     `1deb031a…`.
+
+**Interpretation:** see Phase 7D0 §5. Same service volume on 2026-11-06. The record removals concern
+summer-only routes and an unserved stop, so they are not real-world closures. Two trip-level changes
+(route 06 at 06:25, route 11 at 13:00 → 13:05) are not visible in History's count-based summary. The real
 downloaded ZIP is unchanged (SHA-256 `372e851c…4715`), and no record exists next to it.
